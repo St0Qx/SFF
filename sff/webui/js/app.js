@@ -2637,6 +2637,10 @@ window.App = (function() {
         if (action === 'patch_gaming_mode') {
             Components.showToast('info', 'Patching Gaming Mode (steam-jupiter)...');
             Bridge.call('patch_gaming_mode');
+            // Gaming Mode implies SafeMode should be on too.
+            Bridge.callSync('enable_deck_safe_mode', function(ok) {
+                if (ok) Components.showToast('success', 'SafeMode enabled in SLSsteam config.');
+            });
             return;
         }
 
