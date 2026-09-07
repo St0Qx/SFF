@@ -642,11 +642,30 @@ def download_depot(
         except Exception:
             return False
 
+    # Park between chunks while paused so resume is instant (no re-verify).
+    try:
+        from sff.game import download_queue as _dq
+        _pause_gate = _dq.register_pause_gate(_cancel_app_id)
+    except Exception:
+        _pause_gate = None
+
+    def _wait_pause():
+        """True if the worker should abort (cancel arrived while parked)."""
+        if _pause_gate is None:
+            return _cancelled()
+        try:
+            from sff.game import download_queue as _dq
+            if _dq.wait_while_paused(_cancel_app_id):
+                return True
+        except Exception:
+            pass
+        return _cancelled()
+
     def _download_one_chunk(sha: str, offset: int, cb_original: int, fpath: Path) -> int:
         """Downloads one chunk. Returns bytes written or -1 on failure."""
         if fatal_error[0] is not None:
             return -1
-        if _cancelled():
+        if _wait_pause():
             return -2
 
         host = host_for_chunk.get(sha, server_hosts[0])
@@ -793,6 +812,11 @@ def download_depot(
             # not after every worker exhausts its retries.
             _abort()
             client.disconnect()
+            try:
+                from sff.game import download_queue as _dq
+                _dq.unregister_pause_gate(_cancel_app_id)
+            except Exception:
+                pass
 
     print_fn(f"[native] Depot {depot_id} done: {total_bytes[0]:,} bytes ({skipped} cached, {total} downloaded)")
     return True, total_bytes[0]

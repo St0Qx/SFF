@@ -155,6 +155,7 @@ window.Downloads = (function() {
         };
         _wireList(document.getElementById('downloads-active-list'));
         _wireList(document.getElementById('downloads-queue-list'));
+        _wireList(document.getElementById('downloads-history-list'));
 
         var doCancel = function(deleteFiles) {
             if (_pendingCancel) {
@@ -202,11 +203,20 @@ window.Downloads = (function() {
             if (item.error) it.error = item.error;
             // Engine still winding down after a pause/cancel request: the
             // row stays in Active until task_finished reports back.
-            if (it.status === 'downloading') return;
-            if (item.state === 'downloading') it.status = item.paused ? 'paused' : 'downloading';
+            if (it.status === 'downloading' || it.status === 'parked') {
+                if (item.state === 'downloading') {
+                    it.status = item.paused ? 'parked' : 'downloading';
+                    if (!item.paused) it.pendingPause = false;
+                }
+                return;
+            }
+            if (item.state === 'downloading') it.status = 'downloading';
             else if (item.state === 'queued') it.status = item.paused ? 'paused' : 'queued';
             else if (item.state === 'failed') it.status = 'failed';
             else if (item.state === 'done') it.status = 'done';
+            if (typeof item.progress === 'number' && item.progress > (it.progress || 0)) {
+                it.progress = item.progress;  // survive a restart at real %
+            }
         });
         Object.keys(_items).forEach(function(id) {
             var it = _items[id];
@@ -220,6 +230,7 @@ window.Downloads = (function() {
     function _badge(it) {
         if (it.cancelling) return ['cancelling', 'queue-badge-failed'];
         if (it.pendingPause) return ['pausing', 'queue-badge-paused'];
+        if (it.status === 'parked') return ['paused', 'queue-badge-paused'];
         var cls = it.status === 'cancelled' ? 'failed' : it.status;
         return [it.status, 'queue-badge-' + cls];
     }
@@ -231,6 +242,11 @@ window.Downloads = (function() {
             if (it.pendingPause) return '<button class="btn btn-sm" disabled>Pausing…</button>';
             return '<button class="btn btn-sm" data-pause-appid="' + esc(it.app_id) + '">Pause</button>' +
                    '<button class="btn btn-sm" data-cancel-appid="' + esc(it.app_id) + '">Cancel</button>';
+        }
+        if (it.status === 'parked') {
+            if (it.cancelling) return '<button class="btn btn-sm" disabled>Cancelling…</button>';
+            return '<button class="btn btn-sm" data-queue-action="resume" data-item-id="' + esc(it.qid) + '">Resume</button>' +
+                   '<button class="btn btn-sm" data-queue-action="cancel" data-item-id="' + esc(it.qid) + '">Cancel</button>';
         }
         if (it.status === 'paused') {
             return '<button class="btn btn-sm" data-queue-action="resume" data-item-id="' + esc(it.qid) + '">Resume</button>' +
@@ -318,9 +334,9 @@ window.Downloads = (function() {
         var active = [], queue = [], history = [];
         Object.keys(_items).forEach(function(id) {
             var it = _items[id];
-            if (it.status === 'downloading') { active.push(it); return; }
+            if (it.status === 'downloading' || it.status === 'parked') { active.push(it); return; }
             if (it.qid && (it.status === 'paused' || it.status === 'queued' ||
-                           it.status === 'failed' || it.status === 'done')) queue.push(it);
+                           it.status === 'failed')) queue.push(it);
             if (it.status === 'done' || it.status === 'cancelled' ||
                 (it.status === 'failed' && !it.qid)) history.push(it);
         });

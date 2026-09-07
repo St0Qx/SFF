@@ -472,6 +472,14 @@ def main():
     _guard.start_server(_on_show_from_second_instance, on_file=_on_file_from_second_instance)
     app.aboutToQuit.connect(_guard.cleanup)
 
+    def _release_pause_gates():
+        try:
+            from sff.game import download_queue as _dq
+            _dq.release_all_gates()
+        except Exception:
+            pass
+    app.aboutToQuit.connect(_release_pause_gates)
+
     from sff.uri_handler import UriHandler
     if not UriHandler.is_registered():
         UriHandler.register()

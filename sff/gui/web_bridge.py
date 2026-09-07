@@ -535,6 +535,7 @@ class WebBridge(QObject):
         self._workers = []  # prevent GC of running workers
         self._threads = []  # prevent GC of running QThreads
         self._pending_deletes = {}  # app_id -> True: wipe files once engine stops
+        self.download_progress.connect(self._record_progress)
         # 6.2.5: per-app update-available state cache. Populated by
         # check_game_update() on success. The badge/popover code
         # reads through get_game_update_state(). Keys are str(app_id).
@@ -669,6 +670,19 @@ class WebBridge(QObject):
         self._workers.append(worker)
         self._threads.append(thread)
         thread.start()
+
+    def _record_progress(self, payload):
+        """Mirror the last reported percent into the queue file so a paused
+        or interrupted download restarts at its real progress."""
+        try:
+            data = json.loads(payload)
+            app_id = data.get("app_id")
+            pct = data.get("progress")
+            if app_id and isinstance(pct, (int, float)) and pct >= 0:
+                from sff.game import download_queue as _dq
+                _dq.record_progress(str(app_id), pct)
+        except Exception:
+            pass
 
     def _emit_task_result(self, task_name, success, message="", **extra):
         data = {"task": task_name, "success": success, "message": message}

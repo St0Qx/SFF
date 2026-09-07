@@ -70,6 +70,7 @@ def _load():
                     "started_at": float(e.get("started_at") or 0) or None,
                     "error": str(e.get("error") or ""),
                     "paused": bool(e.get("paused", False)),
+                    "progress": float(e.get("progress") or 0),
                 })
         return out
     except Exception as e:
@@ -107,6 +108,7 @@ def enqueue(app_id, name="", source="oureveryday"):
         "started_at": None,
         "error": "",
         "paused": False,
+        "progress": 0.0,
     }
     items.append(item)
     _save(items)
@@ -160,6 +162,30 @@ def mark_started(item_id):
             _save(items)
             return True
     return False
+
+
+# Last reported percent per app, kept even before a queue item exists
+# (Store-tab downloads only get an item when paused).
+_last_progress: dict = {}
+
+
+def record_progress(app_id, pct):
+    """Persist the last reported download percent so a paused or interrupted
+    item restarts at its real progress instead of 0%. Writes are throttled
+    to ~1% deltas to keep the JSON file off the hot path."""
+    try:
+        pct = max(0.0, min(100.0, float(pct)))
+    except (TypeError, ValueError):
+        return
+    app_id = str(app_id)
+    _last_progress[app_id] = pct
+    items = _load()
+    for e in items:
+        if e["app_id"] == app_id:
+            if pct >= 100 or abs(pct - e.get("progress", 0)) >= 1.0:
+                e["progress"] = pct
+                _save(items)
+            return
 
 
 def mark_finished(app_id, success, error=""):
@@ -231,7 +257,14 @@ def cancel_item(item_id):
         if e["id"] == str(item_id):
             if e["state"] == STATE_DOWNLOADING:
                 logger.debug("queue: cancel requested for app %s (in flight)", e["app_id"])
+                # A parked worker must wake and abort, and the result must
+                # report as cancelled, not paused.
+                clear_pause_flag(e["app_id"])
                 request_cancel(e["app_id"])
+                with _gate_lock:
+                    ev = _pause_gates.get(str(e["app_id"]))
+                if ev is not None:
+                    ev.set()
             else:
                 logger.debug("queue: dropped queued item %s (app %s)", item_id, e["app_id"])
                 _save([x for x in items if x["id"] != str(item_id)])
@@ -240,25 +273,89 @@ def cancel_item(item_id):
 
 
 # ── Pause ─────────────────────────────────────────────────────────────
-# Pause reuses the cancel stop mechanism (engines poll is_cancelled), but
-# the item stays in the persisted queue as queued+paused. The native
-# downloader SHA1-verifies chunks on disk at start, so resuming picks up
-# mid-file instead of from zero.
+# In-session pause parks the worker thread on an Event: the native
+# downloader waits between chunks, so resume picks up instantly with no
+# re-verify. When no gate is registered (DDMod phase, manifest fetch, or
+# a download from before this process started) pause falls back to the
+# cancel stop and the item resumes via the re-verify path.
 _paused_apps: set = set()
+_pause_gates: dict = {}
+_gate_lock = threading.Lock()
+
+
+def register_pause_gate(app_id):
+    ev = threading.Event()
+    ev.set()
+    # A pause that landed between depots must park the new depot too.
+    if is_paused(app_id):
+        ev.clear()
+    with _gate_lock:
+        _pause_gates[str(app_id)] = ev
+    return ev
+
+
+def unregister_pause_gate(app_id):
+    with _gate_lock:
+        _pause_gates.pop(str(app_id), None)
+
+
+def has_gate(app_id):
+    """True while a native-downloader worker is parked-able for this app."""
+    with _gate_lock:
+        return str(app_id) in _pause_gates
+
+
+def release_all_gates():
+    """App quit: wake every parked worker so its thread can finish instead
+    of blocking interpreter exit. Items stay queued+paused on disk."""
+    with _gate_lock:
+        gates = list(_pause_gates.items())
+    for app_id, ev in gates:
+        request_cancel(app_id)
+        ev.set()
+
+
+def wait_while_paused(app_id) -> bool:
+    """Block the calling worker while the app is paused. Returns True if
+    a cancel arrived while parked (the worker should abort)."""
+    with _gate_lock:
+        ev = _pause_gates.get(str(app_id))
+    if ev is None:
+        return is_cancelled(app_id)
+    while not ev.wait(timeout=0.5):
+        if is_cancelled(app_id):
+            return True
+    return False
 
 
 def request_pause(app_id):
     with _cancel_lock:
         _paused_apps.add(str(app_id))
-    # The engines only watch is_cancelled; flag it so the running task
-    # stops. mark_finished checks is_paused first and keeps the item.
-    request_cancel(app_id)
+    with _gate_lock:
+        ev = _pause_gates.get(str(app_id))
+    if ev is not None:
+        ev.clear()
+    else:
+        # The engines only watch is_cancelled; flag it so the running task
+        # stops. mark_finished checks is_paused first and keeps the item.
+        request_cancel(app_id)
 
 
 def clear_pause(app_id):
     with _cancel_lock:
         _paused_apps.discard(str(app_id))
+    with _gate_lock:
+        ev = _pause_gates.get(str(app_id))
+    if ev is not None:
+        ev.set()
     clear_cancel(app_id)
+
+
+def clear_pause_flag(app_id):
+    """Drop the paused flag without resuming: a cancel on a paused item
+    must report as cancelled, not paused."""
+    with _cancel_lock:
+        _paused_apps.discard(str(app_id))
 
 
 def is_paused(app_id):
@@ -305,6 +402,7 @@ def pause_by_app_id(app_id, name="", source="oureveryday"):
             "started_at": time.time(),
             "error": "",
             "paused": True,
+            "progress": _last_progress.get(app_id, 0.0),
         }
         items.append(item)
         _save(items)
