@@ -471,10 +471,15 @@ class ManifestDownloader:
                     if result is not None:
                         logger.debug(f"Mirror {label} download succeeded for depot {depot_id}")
                         return result
-                logger.debug(
-                    f"Mirror {label} had no usable request code "
-                    f"(HTTP {getattr(resp, 'status_code', 'unknown')})"
-                )
+                    logger.debug(
+                        f"Mirror {label} gave a request code but the CDN download "
+                        f"failed for depot {depot_id}"
+                    )
+                else:
+                    logger.debug(
+                        f"Mirror {label} had no usable request code "
+                        f"(HTTP {getattr(resp, 'status_code', 'unknown')})"
+                    )
             except Exception as e:
                 logger.debug(f"Mirror {label} request failed: {e}")
         return None
