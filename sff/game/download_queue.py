@@ -186,7 +186,7 @@ def mark_finished(app_id, success, error=""):
     for e in items:
         if e["app_id"] == str(app_id) and e["state"] == STATE_DOWNLOADING:
             e["state"] = STATE_DONE if success else STATE_FAILED
-            if error:
+            if error and not success:
                 e["error"] = str(error)[:300]
             found = True
     if found:

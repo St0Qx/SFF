@@ -266,7 +266,7 @@ window.Downloads = (function() {
         var sourceHtml = it.source
             ? ' <span style="font-size:11px;opacity:0.65;">via ' + Components.escapeHtml(it.source) + '</span>'
             : '';
-        var errHtml = it.error
+        var errHtml = (it.error && it.status === 'failed')
             ? ' <span style="font-size:11px;opacity:0.7;" title="' + Components.escapeHtml(it.error) + '">(error)</span>'
             : '';
         row.innerHTML =
