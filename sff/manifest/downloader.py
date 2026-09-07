@@ -285,8 +285,8 @@ class ManifestDownloader:
         pin_map = getattr(lua, "manifest_overrides", {}) or {}
         for pair in lua.depots:
             depot_id = str(pair.depot_id)
-            if not pair.decryption_key:
-                logger.debug(f"Skipping {depot_id} because it has no decryption key")
+            if not pair.decryption_key or depot_id == str(app_id):
+                logger.debug(f"Skipping {depot_id} because it has no decryption key or is not a depot")
                 continue
             if use_pins and depot_id in pin_map:
                 pinned_gid = pin_map[depot_id]
@@ -690,8 +690,8 @@ class ManifestDownloader:
             for pair in lua.depots:
                 depot_id = pair.depot_id
                 dec_key = pair.decryption_key
-                if dec_key == "":
-                    logger.debug(f"Skipping {depot_id} because it's not a depot")
+                if dec_key == "" or str(depot_id) == str(lua.app_id):
+                    logger.debug(f"Skipping {depot_id} because it has no decryption key or is not a depot")
                     continue
                 manifest_id = manifest_ids.get(depot_id)
                 if manifest_id is None:
