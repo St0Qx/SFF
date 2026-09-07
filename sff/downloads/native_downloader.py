@@ -407,6 +407,7 @@ def download_depot(
     steam_path: Path | str | None = None,
     manifest_bytes: bytes | None = None,
     manifest_path: Path | str | None = None,
+    cancel_app_id: int | str | None = None,
 ) -> tuple[bool, int]:
     """Download one Steam depot directly from CDN (no .NET).
 
@@ -414,8 +415,13 @@ def download_depot(
     used directly (no CDN manifest fetch), which is required when the
     Steam account does not own the game.  The manifest content is
     AES-256-CBC encrypted by Valve and will be decrypted in-process.
+
+    *app_id* is the depot's owning app (used for CDN auth + request
+    code); *cancel_app_id* is the app the download queue tracks, which
+    differs when a DLC lua pulls the base game's depots.
     """
     app_id = int(app_id)
+    _cancel_app_id = int(cancel_app_id) if cancel_app_id is not None else app_id
     depot_id = int(depot_id)
     manifest_gid = int(manifest_id)
     output_dir = Path(output_dir)
@@ -632,7 +638,7 @@ def download_depot(
             return True
         try:
             from sff.game import download_queue as _dq
-            return _dq.is_cancelled(app_id)
+            return _dq.is_cancelled(_cancel_app_id)
         except Exception:
             return False
 

@@ -298,6 +298,58 @@ def _calculate_dir_size(path: Path) -> int:
     return total
 
 
+def _resolve_depot_owners(appid: str, depot_ids: list) -> dict:
+    """Map each depot to the app that actually owns it.
+
+    A DLC lua often lists the base game's depots. Downloading those under
+    the DLC's appid makes DDMod abort (exit -6): the DLC's appinfo grants
+    none of them, so it can't resolve a manifest. Steam's
+    primary-depot==appid convention and the depotfromapp field identify
+    the real owner. Anything unresolvable falls back to appid.
+    """
+    owners = {str(d): str(appid) for d in depot_ids}
+    try:
+        from sff.network.steam_client import create_provider_for_current_thread
+        provider = create_provider_for_current_thread()
+    except Exception:
+        return owners
+
+    def _info(aid):
+        try:
+            return provider.get_single_app_info(int(aid), quick=True) or {}
+        except Exception:
+            return {}
+
+    app_depots = _info(appid).get("depots") or {}
+    # Selected depots that are themselves real apps (base-game primary
+    # depots like 3438850) are candidate owners for the rest of the set.
+    candidates = {}
+    for d in depot_ids:
+        d = str(d)
+        if d == str(appid):
+            continue
+        info = _info(d)
+        if (info.get("common") or {}).get("name"):
+            candidates[d] = info.get("depots") or {}
+    for d in depot_ids:
+        d = str(d)
+        if d == str(appid) or d in app_depots:
+            continue  # appid's own appinfo grants it (owner stays appid)
+        meta = app_depots.get(d)
+        if isinstance(meta, dict) and meta.get("depotfromapp"):
+            owners[d] = str(meta["depotfromapp"])
+        elif d in candidates:
+            owners[d] = d  # depot id is its own app
+        else:
+            for cand, cand_depots in candidates.items():
+                if d in cand_depots:
+                    owners[d] = cand
+                    break
+            else:
+                owners[d] = None  # nothing in the set grants it
+    return owners
+
+
 def run_download(
     game_data: dict,
     selected_depots: list,
@@ -375,6 +427,13 @@ def run_download(
         except Exception:
             return False
 
+    # Pinned manifests fetch under any app, so the owning-app lookup is
+    # only needed when some depot has no manifest (DDMod would otherwise
+    # abort -6 on a DLC lua that lists the base game's depots).
+    depot_owners: dict = {}
+    if any(str(d) not in manifests for d in selected_depots):
+        depot_owners = _resolve_depot_owners(appid, selected_depots)
+
     native_failed: list = []
     if force_ddmod:
         native_failed = list(selected_depots)
@@ -406,10 +465,11 @@ def run_download(
                     if mf.exists():
                         manifest_path = mf
                     ok, size = _native_dl(
-                        appid, depot_id_str, manifest_id, key, download_dir,
+                        depot_owners.get(depot_id_str) or appid, depot_id_str, manifest_id, key, download_dir,
                         print_fn=print_fn, os_filter=target_os,
                         steam_path=steam_path,
                         manifest_path=manifest_path,
+                        cancel_app_id=appid,
                     )
                     if ok:
                         print_fn(Fore.GREEN + f"Depot {depot_id_str} downloaded ({size:,} bytes)" + Style.RESET_ALL)
@@ -481,6 +541,18 @@ def run_download(
             return False, 0
         depot_id_str = str(depot_id)
         manifest_id = manifests.get(depot_id_str)
+        owner = depot_owners.get(depot_id_str, appid)
+        if not manifest_id and owner is None:
+            # No pinned manifest and no app in the set owns this depot —
+            # DDMod would abort (-6) on all retries. Fail fast instead.
+            print_fn(
+                Fore.RED
+                + f"Depot {depot_id_str}: no manifest and no owning app found, skipping"
+                + Style.RESET_ALL
+            )
+            all_ok = False
+            continue
+        owner = owner or appid
 
         try:
             from sff.core.storage.settings import get_setting
@@ -492,7 +564,7 @@ def run_download(
 
         cmd = [
             dotnet_path, str(dll_path),
-            "-app", appid,
+            "-app", str(owner),
             "-depot", depot_id_str,
             "-depotkeys", str(KEYS_TMP),
             "-max-downloads", max_dl,
