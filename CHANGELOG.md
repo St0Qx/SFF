@@ -1,5 +1,27 @@
 # Changelog
 
+## 6.6.7b
+
+### New
+
+- **Pause and resume downloads** - every active download has a Pause button next to Cancel. Pausing parks the downloader mid-chunk, so resuming continues instantly with no re-verification. Paused downloads survive an app or PC restart and pick back up at their real percentage.
+- **Downloads tab rework** - each row is now a card with the progress filling its background left to right. One entry per game moves between Active Downloads, Download Queue, and History by its status instead of duplicating.
+- **Pick Source prompt** - when a source has nothing for the game, a dialog offers Pick Source or Cancel instead of a dead progress bar.
+- **MigoReleases pattern source** - LumaCore patterns now download from michelegoku3/MigoReleases (pattern branch) as the single source.
+- **SafeMode on Gaming Mode patch** - Patch Gaming Mode now enables SafeMode in SLSsteam's config so a Steam client update disables SLSsteam instead of crashing Steam.
+
+### Fixed
+
+- **Progress accuracy** - the percentage now covers depot downloads only (0% until the first depot starts, 100% when all finish), counts bytes instead of chunks, and weights each depot by its size. The status line and the bar now agree.
+- **DLC luas that list base-game depots** - DDMod no longer aborts with exit -6; each depot downloads under the app that actually grants access to it.
+- **Sledding Game and similar installs** - a lua whose filename isn't an app ID no longer gets its app ID hijacked by an appended DLC entry, and the real game name shows in Active Downloads and History.
+- **Corrupt manifests** - CDN error pages saved as .manifest files are rejected instead of crashing the parser, and the mirror log says what actually failed.
+- **Cancel reporting** - a cancelled download no longer shows "Added to library" or lands in History as Completed.
+- **SLSsteam config.yaml corruption** - regexes that matched newlines could delete unrelated lines when removing a game; all whitespace patterns are now line-safe and every write is bounded to its own section.
+- **Lua hot-reload** - installing or removing a game's Lua now stops Steam first on Linux, since SLSsteam doesn't reliably pick up plugin changes while Steam runs.
+- **Base app ID treated as a depot** - the fake primary-depot line in luas is skipped in download, key, and manifest paths.
+- **steam-jupiter backup filename** - the code now writes the backup where the docs said it would (`/usr/bin/steam-jupiter.bak`).
+
 ## 6.6.7a
 
 ### New
