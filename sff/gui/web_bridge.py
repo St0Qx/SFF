@@ -77,7 +77,6 @@ from sff.gui.bridges.download_bridge import (
     _bridge_download_game_version_native,
     _bridge_download_older_version_auto,
     _bridge_download_game_with_source,
-    _bridge_pin_manifest_ids,
     _bridge_import_local_lua,
     _bridge_run_linux_ddmod_fallback,
     _bridge_run_linux_fastest,
@@ -1313,12 +1312,9 @@ class WebBridge(QObject):
     @pyqtSlot(str, str, str, str)
     def download_game_version(self, app_id, manifest_override_json, source='oureveryday', build_id=''):
         return _bridge_download_game_version(self, app_id, manifest_override_json, source, build_id)
-    @pyqtSlot(str, str)
-    def pin_manifest_ids(self, app_id, manifest_override_json):
-        return _bridge_pin_manifest_ids(self, app_id, manifest_override_json)
-    @pyqtSlot(str, str, str)
-    def download_game_version_native(self, app_id, manifest_override_json, source='oureveryday'):
-        return _bridge_download_game_version_native(self, app_id, manifest_override_json, source)
+    @pyqtSlot(str, str, str, str)
+    def download_game_version_native(self, app_id, manifest_override_json, source='oureveryday', build_id=''):
+        return _bridge_download_game_version_native(self, app_id, manifest_override_json, source, build_id)
     @pyqtSlot(str, str)
     def download_older_version_auto(self, app_id, build_id):
         return _bridge_download_older_version_auto(self, app_id, build_id)

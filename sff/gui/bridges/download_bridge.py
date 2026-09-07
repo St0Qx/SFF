@@ -1067,36 +1067,6 @@ def _make_run_download_print_fn(bridge, app_id, game_name, selected_depots,
     return _print_fn
 
 
-def _bridge_pin_manifest_ids(bridge, app_id, manifest_override_json):
-    """Pin depot manifest IDs into SLSsteam's config.yaml so Steam doesn't
-    offer or apply an update over a manually-selected older version."""
-    def _do():
-        try:
-            manifest_override = json.loads(manifest_override_json)
-        except (json.JSONDecodeError, TypeError):
-            return (False, "Invalid manifest data")
-        if not manifest_override:
-            return (False, "No depots to pin")
-        from sff.linux.yaml_config import add_manifest_id, get_user_config_path, is_additional_app
-        config_path = get_user_config_path()
-        if not config_path.exists():
-            return (False, "SLSsteam config.yaml not found — pin skipped.")
-        if is_additional_app(config_path, str(app_id)):
-            # DisableUpdates already covers unowned/shared apps globally.
-            return (True, "This app is unowned (uses DisableUpdates) — no per-depot pin needed.")
-        newly = sum(1 for d, m in manifest_override.items()
-                    if add_manifest_id(config_path, str(d), str(m)))
-        already = len(manifest_override) - newly
-        return (True, f"Pinned {newly} depot manifest ID(s) to SLSsteam config"
-                      + (f" ({already} already set)." if already else "."))
-
-    def _on_done(result):
-        ok, msg = result if isinstance(result, tuple) else (False, "Pin failed")
-        bridge._emit_task_result("pin_manifest_ids", ok, msg, app_id=app_id)
-
-    bridge._run_async(_do, on_done=_on_done)
-
-
 def _bridge_download_game_version(bridge, app_id, manifest_override_json, source='oureveryday', build_id=''):
     """Download specific version via process_from_store().
     Emits download_progress + task_finished signals."""
@@ -1355,7 +1325,7 @@ def _native_install_pinned(bridge, app_id, lua_path, manifest_override, skip_aut
     return True
 
 
-def _bridge_download_game_version_native(bridge, app_id, manifest_override_json, source='oureveryday'):
+def _bridge_download_game_version_native(bridge, app_id, manifest_override_json, source='oureveryday', build_id=''):
     """Download specific version via Steam Native flow.
     Downloads Lua, pins manifests with write_manifest_pins_to_lua,
     installs to Steam plugin folder, writes ACF. Steam downloads
@@ -1401,7 +1371,10 @@ def _bridge_download_game_version_native(bridge, app_id, manifest_override_json,
             }))
             return False
 
-        return _native_install_pinned(bridge, app_id, lua_path, manifest_override, skip_auto_update=True)
+        return _native_install_pinned(
+            bridge, app_id, lua_path, manifest_override,
+            skip_auto_update=True, buildid_override=str(build_id) if build_id else None,
+        )
 
     def _on_done(result):
         success = result is True
@@ -1513,10 +1486,7 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
             )
             parsed.app_id = app_id
 
-        lua_depots = {
-            str(pair.depot_id) for pair in parsed.depots
-            if str(pair.depot_id) != str(parsed.app_id)
-        }
+        lua_depots = {str(pair.depot_id) for pair in parsed.depots}
         override = {depot: gid for depot, gid in build_pins.items() if depot in lua_depots}
         if not override:
             bridge.download_progress.emit(json.dumps({
@@ -2005,7 +1975,7 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
             depots_dict = {}
             manifests_dict = {}
             for d in parsed.depots:
-                if d.decryption_key and str(d.depot_id) != str(parsed.app_id):
+                if d.decryption_key:
                     depots_dict[str(d.depot_id)] = {"key": d.decryption_key}
 
             _depot_ids_set = set(depots_dict.keys())

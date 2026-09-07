@@ -372,8 +372,8 @@ class ConfigVDFWriter:
             for pair in lua.depots:
                 depot_id = pair.depot_id
                 dec_key = pair.decryption_key
-                if dec_key == "" or str(depot_id) == str(lua.app_id):
-                    logger.debug(f"Skipping {depot_id} because it has no decryption key or is not a depot")
+                if dec_key == "":
+                    logger.debug(f"Skipping {depot_id} because it has no decryption key")
                     continue
                 print(
                     f"Depot {depot_id} has decryption key {dec_key}... ",

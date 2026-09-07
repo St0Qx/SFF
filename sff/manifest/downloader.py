@@ -49,7 +49,7 @@ from sff.manifest.id_resolver import (
 from sff.ui.prompts import prompt_confirm, prompt_select, prompt_text
 from sff.network.steam_client import SteamInfoProvider, get_product_info
 from sff.core.storage.settings import get_setting
-from sff.core.utils import manifests_staging_dir
+from sff.core.utils import manifests_staging_dir, enter_path
 from sff.core.structs import (  # type: ignore
     DepotManifestMap,
     LuaParsedInfo,
@@ -292,8 +292,12 @@ class ManifestDownloader:
         pin_map = getattr(lua, "manifest_overrides", {}) or {}
         for pair in lua.depots:
             depot_id = str(pair.depot_id)
-            if not pair.decryption_key or depot_id == str(app_id):
-                logger.debug(f"Skipping {depot_id} because it has no decryption key or is not a depot")
+            if not pair.decryption_key:
+                logger.debug(f"Skipping {depot_id} because it has no decryption key")
+                continue
+            # Some games genuinely use their own app ID as their depot ID, so check Steam's real depot list.
+            if depot_id == str(app_id) and main_app_data and not enter_path(main_app_data, "depots", depot_id):
+                logger.debug(f"Skipping {depot_id}: matches app ID and isn't a real Steam depot")
                 continue
             if use_pins and depot_id in pin_map:
                 pinned_gid = pin_map[depot_id]
@@ -702,8 +706,8 @@ class ManifestDownloader:
             for pair in lua.depots:
                 depot_id = pair.depot_id
                 dec_key = pair.decryption_key
-                if dec_key == "" or str(depot_id) == str(lua.app_id):
-                    logger.debug(f"Skipping {depot_id} because it has no decryption key or is not a depot")
+                if dec_key == "":
+                    logger.debug(f"Skipping {depot_id} because it has no decryption key")
                     continue
                 manifest_id = manifest_ids.get(depot_id)
                 if manifest_id is None:

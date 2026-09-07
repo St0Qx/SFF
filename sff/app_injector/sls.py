@@ -90,6 +90,7 @@ class SLSManager(AppInjectionManager):
     ):
         from sff.linux.yaml_config import add_additional_app, add_dlc_data
         known_depot_ids: set[str] = set()
+        base_app_id = str(data.app_id) if isinstance(data, LuaParsedInfo) else None
         if isinstance(data, int):
             data = [data]
         elif isinstance(data, LuaParsedInfo):
@@ -126,8 +127,8 @@ class SLSManager(AppInjectionManager):
             data = ids
         changes = 0
         for new_app_id in data:
-            # depots aren't real apps
-            if str(new_app_id) in known_depot_ids:
+            # depots aren't real apps, but the app itself always is
+            if str(new_app_id) in known_depot_ids and str(new_app_id) != base_app_id:
                 logger.debug("add_ids: skipping %s — known depot, not an app", new_app_id)
                 continue
             # Try to register DlcData for this ID if it's a DLC of a
