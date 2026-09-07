@@ -938,7 +938,7 @@ def _bridge_lure_fix_acf(bridge, app_id):
             except Exception:
                 pass
             acf_data["AppState"] = state
-            vdf_dump(acf_path, acf_data)
+            vdf_dump(acf_path, acf_data, tabbed=True)
             try:
                 # Windows must keep ACFs writable for Steam updates.
                 if sys.platform != "win32":
@@ -2408,6 +2408,41 @@ def _bridge_set_global_avatar(bridge, source_path):
     except Exception as e:
         return str(e)
 
+# Steam Play compat tools/runtimes -- not real games
+_STEAM_TOOL_APPIDS = {
+    1420170,  # Proton (rolling)
+    858280,   # Proton 3.7
+    930400,   # Proton 3.16
+    961940,   # Proton 4.11
+    1054830,  # Proton 4.2
+    1113280,  # Proton 5.13
+    1245040,  # Proton 5.0
+    1420150,  # Proton 6.3
+    1580130,  # Proton 6.3-8
+    1580140,  # Proton 7.0
+    1887720,  # Proton 7.0
+    2230260,  # Proton 8.0
+    2348590,  # Proton 9.0
+    2805730,  # Proton 10.0
+    1826330,  # Proton Experimental
+    228980,   # Steamworks Common Redistributables
+    1070560,  # Steam Linux Runtime (scout)
+    1391110,  # Steam Linux Runtime - Soldier
+    1493710,  # Steam Linux Runtime - Sniper
+    1628350,  # Steam Linux Runtime - Medic (Steam client itself)
+}
+_STEAM_TOOL_NAME_RE = re.compile(
+    r"\bProton\b|Steam Linux Runtime|Steamworks Common Redistributables|SteamVR\b",
+    re.IGNORECASE,
+)
+
+
+def _is_steam_tool_entry(app_id: str, name: str) -> bool:
+    if app_id.isdigit() and int(app_id) in _STEAM_TOOL_APPIDS:
+        return True
+    return bool(_STEAM_TOOL_NAME_RE.search(name or ""))
+
+
 def _bridge__scan_installed_games(bridge):
     """Walk all Steam libraries and return JSON string of installed games.
     Runs on a background thread -- safe to call from _prefetch_installed_games."""
@@ -2448,6 +2483,9 @@ def _bridge__scan_installed_games(bridge):
                         elif '"installdir"' in line:
                             installdir = line.split('"')[-2] if '"' in line else ""
                     if not app_id or app_id in seen:
+                        continue
+                    if _is_steam_tool_entry(app_id, name):
+                        seen.add(app_id)
                         continue
                     if installdir:
                         game_path = steamapps / "common" / installdir
@@ -2630,21 +2668,35 @@ def _bridge_delete_game(bridge, app_id, game_path, mode):
                 lua_removed = True
             except Exception as e:
                 logger.warning("delete_game: stplug-in Lua removal failed: %s", e)
-            # Also remove from saved_lua/ cache
-            try:
-                saved_path = Path.cwd() / "saved_lua" / f"{app_id_int}.lua"
-                if saved_path.exists():
-                    saved_path.unlink()
-                    logger.info("delete_game: removed saved_lua cache %s", saved_path)
-            except Exception:
-                pass
+            if mode != "full":
+                # Full deletes keep this so the game can be reinstalled later.
+                try:
+                    saved_path = Path.cwd() / "saved_lua" / f"{app_id_int}.lua"
+                    if saved_path.exists():
+                        saved_path.unlink()
+                        logger.info("delete_game: removed saved_lua cache %s", saved_path)
+                except Exception:
+                    pass
 
         if mode != "full":
             if lua_removed:
                 return (True, "Removed from library. If the game still shows in Steam, restart Steam (or run Auto LC Setup if you haven't yet).")
             return (True, "Removed from library")
 
-        # mode='full' also wipes the ACF manifest + the game folder.
+        # Also unpins depots and removes the AppID entry from SLSsteam's config.yaml.
+        try:
+            from sff.lua.manager import parse_lua_contents
+            from sff.linux import yaml_config
+            config_path = yaml_config.get_user_config_path()
+            yaml_config.remove_additional_app(config_path, str(app_id_int))
+            saved_path = Path.cwd() / "saved_lua" / f"{app_id_int}.lua"
+            if saved_path.exists():
+                parsed = parse_lua_contents(saved_path.read_text(encoding="utf-8"), saved_path)
+                for depot in (parsed.depots if parsed else []):
+                    yaml_config.remove_manifest_id(config_path, str(depot.depot_id))
+        except Exception as e:
+            logger.warning("delete_game: config.yaml cleanup failed: %s", e)
+
         files_deleted = False
 
         if bridge._steam_path:
@@ -2675,9 +2727,13 @@ def _bridge_delete_game(bridge, app_id, game_path, mode):
     def _on_done(result):
         if isinstance(result, tuple):
             ok, msg = result
-            bridge._emit_task_result("delete_game", ok, msg, app_id=app_id)
         else:
-            bridge._emit_task_result("delete_game", False, "Delete failed", app_id=app_id)
+            ok, msg = False, "Delete failed"
+        if ok:
+            logger.info("delete_game: app_id=%s mode=%s succeeded: %s", app_id, mode, msg)
+        else:
+            logger.error("delete_game: app_id=%s mode=%s failed: %s", app_id, mode, msg)
+        bridge._emit_task_result("delete_game", ok, msg, app_id=app_id)
 
     bridge._run_async(_do, on_done=_on_done)
 

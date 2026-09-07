@@ -347,6 +347,7 @@ def get_game_name(app_id):
             "json",
         )
     )
+    app_name = None
     if official_info:
         app_name = official_info.get(app_id, {}).get("data", {}).get("name")
         if app_name:

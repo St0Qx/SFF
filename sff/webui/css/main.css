@@ -473,6 +473,15 @@ a:hover { text-decoration: underline; }
     background: var(--btn-hover);
 }
 
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn:disabled:hover {
+    background: var(--btn-bg);
+}
+
 .btn-primary {
     background: var(--accent);
     color: #fff;
@@ -481,6 +490,10 @@ a:hover { text-decoration: underline; }
 
 .btn-primary:hover {
     opacity: 0.85;
+}
+
+.btn-primary:disabled:hover {
+    opacity: 0.5;
 }
 
 .btn-danger {
@@ -778,6 +791,18 @@ input:focus, select:focus {
 .download-option:hover {
     border-color: var(--accent);
     transform: translateX(4px);
+}
+
+.download-option:disabled,
+.download-option.is-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.download-option:disabled:hover,
+.download-option.is-disabled:hover {
+    border-color: var(--border);
+    transform: none;
 }
 
 .dl-icon {

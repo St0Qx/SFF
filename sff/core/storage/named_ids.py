@@ -49,10 +49,31 @@ def _scan_saved_lua_ids(folder: Path) -> list[str]:
     return [lua_path.stem for lua_path in folder.glob("*.lua")]
 
 
-def _backfill_unknown_names(registry, disk_ids) -> bool:
+def _known_depot_ids(folder: Path) -> set[str]:
+    """IDs referenced as a depot by any saved lua in the folder."""
+    from sff.lua.manager import parse_lua_contents
+    depot_ids: set[str] = set()
+    for lua_path in folder.glob("*.lua"):
+        try:
+            parsed = parse_lua_contents(lua_path.read_text(encoding="utf-8"), lua_path)
+        except Exception:
+            continue
+        if not parsed:
+            continue
+        # parsed.depots includes the keyless base-app addappid entry, so
+        # drop the app's own ID or the backfill skips every lua.
+        depot_ids.update(
+            str(d.depot_id) for d in parsed.depots if str(d.depot_id) != str(parsed.app_id)
+        )
+    return depot_ids
+
+
+def _backfill_unknown_names(registry, disk_ids, depot_ids=frozenset()) -> bool:
     dirty = False
     for disk_id in disk_ids:
         if disk_id in registry:
+            continue
+        if disk_id in depot_ids:
             continue
         registry[disk_id] = get_game_name(disk_id)
         dirty = True
@@ -67,6 +88,6 @@ def get_named_ids(folder):
     cache_file = _id_cache_path(folder)
     registry = _read_registry_file(cache_file)
 
-    if _backfill_unknown_names(registry, _scan_saved_lua_ids(folder)):
+    if _backfill_unknown_names(registry, _scan_saved_lua_ids(folder), _known_depot_ids(folder)):
         _write_registry_file(cache_file, registry)
     return registry

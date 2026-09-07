@@ -24,7 +24,7 @@ from typing import Any, Optional, overload
 import vdf  # type: ignore
 
 
-def vdf_dump(vdf_file, obj):
+def vdf_dump(vdf_file, obj, tabbed=False):
     from pathlib import Path as _P
     import tempfile
     target = _P(vdf_file)
@@ -33,8 +33,21 @@ def vdf_dump(vdf_file, obj):
     except (FileNotFoundError, PermissionError, OSError):
         return False
     try:
+        # The vdf library escapes ' as \' — VDF/KeyValues has no such escape
+        # (only \\, \", and whitespace-control sequences are meaningful), and
+        # real Steam-written ACFs never do this. Safe to undo unconditionally:
+        # every \ the library emits belongs to some 2-char \X escape token, so
+        # a literal \' in the output can only be the escaped-apostrophe token
+        # itself, never a merge with a neighboring \\ token.
+        text = vdf.dumps(obj, pretty=True).replace("\\'", "'")  # type: ignore
+        if tabbed:
+            # ACF files use two literal tabs between "key" and "value", not
+            # the library's hardcoded single space. Safe to replace: escaping
+            # guarantees no unescaped '"' appears inside key/value content, so
+            # the only place '" "' occurs in the output is this separator.
+            text = text.replace('" "', '"\t\t"')
         with open(tmp_fd, "w", encoding="utf-8") as handle:
-            vdf.dump(obj, handle, pretty=True)  # type: ignore
+            handle.write(text)
         _P(tmp_name).replace(target)
     except (FileNotFoundError, PermissionError, OSError):
         pass

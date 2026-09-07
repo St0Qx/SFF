@@ -606,6 +606,10 @@ class UI:
         from sff.game.game_specific import GameHandler
         from sff.core.storage.vdf import get_steam_libs
         injection_manager = self.app_list_man or self.sls_man
+        if injection_manager is None:
+            msg = "Game injection manager not configured (Injection or SLSteam required)."
+            print(msg)
+            return False, msg
         steam_libs = get_steam_libs(self.steam_path)
         lib_path = steam_libs[0] if steam_libs else self.steam_path
         provider = self._steam_provider()
@@ -732,33 +736,37 @@ class UI:
                 "Paste in here the folder you'd like to move them to "
                 "(Blank defaults to Downloads folder):"
             )
-            default_dir = False
-            unique_name = f"{parsed_lua.app_id}_{time.time()}"
-            if str(dst) == ".":
-                default_dir = True
-                dst = Path.home() / f"Downloads/{unique_name}"
-                dst.mkdir(parents=True, exist_ok=True)
-            for file in manifests:
-                shutil.move(file, dst / file.name)
-                print(f"{file.name} moved")
-            do_zip = prompt_confirm(
-                "Would you like to ZIP these files along with the lua? "
-                "(Zip manifests for use on Linux)"
-            )
-            if do_zip:
-                with (dst / f"{parsed_lua.app_id}.lua").open(
-                    "w", encoding="utf-8"
-                ) as f:
-                    f.write(parsed_lua.contents)
-                if default_dir:
-                    target_zip = dst.parent / f"{unique_name}.zip"
-                    zip_folder(dst, target_zip)
-                    shutil.rmtree(dst)
-                else:
-                    target_zip = dst / f"{unique_name}.zip"
-                    zip_folder(dst, target_zip)
-                    for file in map(lambda x: dst / x.name, manifests):
-                        file.unlink(missing_ok=True)
+            if dst is None:
+                # no folder picked — avoid crashing on dst / ... below
+                print(Fore.YELLOW + "No destination selected — leaving files in the depotcache folder." + Style.RESET_ALL)
+            else:
+                default_dir = False
+                unique_name = f"{parsed_lua.app_id}_{time.time()}"
+                if str(dst) == ".":
+                    default_dir = True
+                    dst = Path.home() / f"Downloads/{unique_name}"
+                    dst.mkdir(parents=True, exist_ok=True)
+                for file in manifests:
+                    shutil.move(file, dst / file.name)
+                    print(f"{file.name} moved")
+                do_zip = prompt_confirm(
+                    "Would you like to ZIP these files along with the lua? "
+                    "(Zip manifests for use on Linux)"
+                )
+                if do_zip:
+                    with (dst / f"{parsed_lua.app_id}.lua").open(
+                        "w", encoding="utf-8"
+                    ) as f:
+                        f.write(parsed_lua.contents)
+                    if default_dir:
+                        target_zip = dst.parent / f"{unique_name}.zip"
+                        zip_folder(dst, target_zip)
+                        shutil.rmtree(dst)
+                    else:
+                        target_zip = dst / f"{unique_name}.zip"
+                        zip_folder(dst, target_zip)
+                        for file in map(lambda x: dst / x.name, manifests):
+                            file.unlink(missing_ok=True)
         print(Fore.GREEN + "\nSuccess! ", end="")
         if move_files and dst:
             if do_zip and target_zip:
@@ -941,11 +949,13 @@ class UI:
             )
         return MainReturnCode.LOOP
 
-    def process_from_store(self, app_id: str, manifest_override: dict, use_hubcap: bool, lib_path=None, build_id_override: str = ""):
+    def process_from_store(self, app_id: str, manifest_override: dict, use_hubcap: bool, lib_path=None, print_fn=print, force_ddmod: bool = False, build_id_override: str = ""):
         """Full download pipeline triggered from the Store tab version picker.
         Downloads game files via DepotDownloaderMod, then writes ACF so
         Steam shows a Play button instead of Update/Install.
         lib_path: pre-selected Steam library path; skips the interactive prompt when provided.
+        print_fn: routes run_download's progress lines to the caller.
+        force_ddmod: skip the native CDN downloader, use DDMod only.
         """
         import time
         from pathvalidate import sanitize_filename
@@ -1016,6 +1026,13 @@ class UI:
             print(Fore.YELLOW + "\nAdding to SLSSteam config:" + Style.RESET_ALL)
             self.sls_man.add_ids(parsed_lua)
             self.sls_man.dlc_check(self.provider, int(parsed_lua.app_id), auto_add_depot_dlcs=True)
+            if manifest_override:
+                try:
+                    from sff.linux.yaml_config import add_manifest_id
+                    for _did, _mid in manifest_override.items():
+                        add_manifest_id(self.sls_man.sls_config_path, str(_did), str(_mid))
+                except Exception:
+                    pass
             try:
                 from sff.linux.slssteam import detect_steam_type, patch_slssteam_config
                 patch_slssteam_config(detect_steam_type(), print)
@@ -1081,11 +1098,12 @@ class UI:
             _app_info_os = provider.get_single_app_info(int(parsed_lua.app_id))
         except Exception:
             _app_info_os = None
-        _target_os = resolve_target_os(selected_depots, _app_info_os, print_fn=print)
-        selected_depots = filter_depots_by_os(selected_depots, _app_info_os, print_fn=print, os_name=_target_os)
-        print(Fore.YELLOW + "\nDownloading game files via DepotDownloaderMod:" + Style.RESET_ALL)
+        _target_os = resolve_target_os(selected_depots, _app_info_os, print_fn=print_fn)
+        selected_depots = filter_depots_by_os(selected_depots, _app_info_os, print_fn=print_fn, os_name=_target_os)
+        print_fn(Fore.YELLOW + "\nDownloading game files via DepotDownloaderMod:" + Style.RESET_ALL)
         download_ok, size_on_disk = run_download(
-            game_data, selected_depots, lib_path, self.steam_path, print_fn=print, os_name=_target_os,
+            game_data, selected_depots, lib_path, self.steam_path, print_fn=print_fn, os_name=_target_os,
+            force_ddmod=force_ddmod,
         )
         try:
             import shutil as _shutil
@@ -1099,6 +1117,7 @@ class UI:
             except Exception:
                 pass
         buildid = "0"
+        all_depots = {}
         acf_manifest_map = dict(manifest_override)
         if build_id_override and str(build_id_override).strip().isdigit():
             # The picker knows which build the chosen manifests belong to.
@@ -1136,10 +1155,18 @@ class UI:
                     acf_manifest_map[depot_id] = str(latest_gid)
         except Exception as exc:
             print(Fore.YELLOW + f"Warning: Failed to fetch buildid/latest manifest GIDs: {exc}" + Style.RESET_ALL)
-        print(Fore.YELLOW + "\nACF Writing (post-download):" + Style.RESET_ALL)
-        acf.write_acf_direct(parsed_lua, acf_manifest_map, size_on_disk, buildid=buildid)
-        acf.patch_workshop_acf(parsed_lua)
-        ensure_library_has_app(self.steam_path, lib_path, str(parsed_lua.app_id))
+        if download_ok:
+            print(Fore.YELLOW + "\nACF Writing (post-download):" + Style.RESET_ALL)
+            acf.write_acf_direct(parsed_lua, acf_manifest_map, size_on_disk, buildid=buildid)
+            acf.patch_workshop_acf(parsed_lua)
+            ensure_library_has_app(self.steam_path, lib_path, str(parsed_lua.app_id))
+        else:
+            print(
+                Fore.RED
+                + "\nDownload failed — skipping ACF write so Steam doesn't "
+                "show a broken/incomplete install as installed."
+                + Style.RESET_ALL
+            )
         if self.download_manager and _tracking_item:
             self.download_manager.complete_external(_tracking_item, success=download_ok)
         duration = time.time() - start_time
@@ -1149,11 +1176,11 @@ class UI:
             success=download_ok,
             duration=duration,
         )
-        self.notification_service.show_success(
-            "Download Complete",
-            f"Successfully installed {parsed_lua.app_id}",
-        )
         if download_ok:
+            self.notification_service.show_success(
+                "Download Complete",
+                f"Successfully installed {parsed_lua.app_id}",
+            )
             print(
                 Fore.GREEN
                 + "\nDownload complete! Game ready to play."
@@ -1161,9 +1188,9 @@ class UI:
             )
         else:
             print(
-                Fore.YELLOW
-                + "\nDownload finished with warnings. Check output above. "
-                + "Game may still work — try launching from Steam."
+                Fore.RED
+                + "\nDownload failed. Check output above. No ACF was written, "
+                + "so Steam will not show this as installed — retry the download."
                 + Style.RESET_ALL
             )
         return MainReturnCode.LOOP

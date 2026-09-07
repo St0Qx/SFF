@@ -18,9 +18,12 @@
 
 import os
 import re
+import time
 from pathlib import Path
 
 from colorama import Fore, Style
+
+from sff.core.storage.vdf import vdf_dump
 
 
 def _sanitize_name(name: str) -> str:
@@ -62,82 +65,64 @@ def create_acf(
     steamapps_dir.mkdir(parents=True, exist_ok=True)
     acf_path = steamapps_dir / f"appmanifest_{appid}.acf"
 
-    installed_depots_lines = []
+    installed_depots = {}
     for depot_id in selected_depots:
         depot_id_str = str(depot_id)
+        if depot_id_str == appid:
+            continue  # the base app ID is never itself a depot
         manifest_gid = manifests.get(depot_id_str, "")
         if manifest_gid:
-            depot_size = _depot_size(depots, depot_id_str)
             depot_info = depots.get(depot_id_str) or depots.get(int(depot_id_str) if depot_id_str.isdigit() else depot_id_str) or {}
-            dlcappid = depot_info.get("dlcappid", "") if isinstance(depot_info, dict) else ""
-            dlc_line = f'\t\t\t"dlcappid"\t\t"{dlcappid}"\n' if dlcappid else ""
-            installed_depots_lines.append(
-                f'\t\t"{depot_id_str}"\n\t\t{{\n'
-                f'\t\t\t"manifest"\t\t"{manifest_gid}"\n'
-                f'\t\t\t"size"\t\t"{depot_size}"\n'
-                f'{dlc_line}'
-                f'\t\t}}'
-            )
+            entry = {"manifest": manifest_gid, "size": _depot_size(depots, depot_id_str)}
+            dlcappid = depot_info.get("dlcappid") if isinstance(depot_info, dict) else None
+            if dlcappid:
+                entry["dlcappid"] = str(dlcappid)
+            installed_depots[depot_id_str] = entry
 
-    if selected_depots and not installed_depots_lines:
-        print_fn(Fore.RED + "Refusing to write ACF: no manifest IDs for selected depots." + Style.RESET_ALL)
+    if selected_depots and not installed_depots:
+        print_fn(Fore.RED + "No manifest IDs for selected depots to write ACF for." + Style.RESET_ALL)
         return False
 
-    installed_depots_block = "\n".join(installed_depots_lines)
-
-    import time as _time
-    _now = str(int(_time.time()))
-    _last_owner = "0"
+    last_owner = "0"
     try:
         from sff.core.storage.settings import get_setting
         from sff.core.structs import Settings
-        sid = get_setting(Settings.STEAM_ID)
+        sid = get_setting(Settings.STEAM32_ID)
         if sid and str(sid).strip():
-            _last_owner = str(sid).strip()
+            last_owner = str(sid).strip()
     except Exception:
         pass
-    acf_content = (
-        '"AppState"\n'
-        '{\n'
-        f'\t"appid"\t\t"{appid}"\n'
-        f'\t"Universe"\t\t"1"\n'
-        f'\t"name"\t\t"{game_name}"\n'
-        f'\t"StateFlags"\t\t"4"\n'
-        f'\t"installdir"\t\t"{installdir}"\n'
-        f'\t"LastUpdated"\t\t"{_now}"\n'
-        f'\t"SizeOnDisk"\t\t"{size_on_disk}"\n'
-        f'\t"StagingSize"\t\t"0"\n'
-        f'\t"buildid"\t\t"{buildid}"\n'
-        f'\t"LastOwner"\t\t"{_last_owner}"\n'
-        f'\t"UpdateResult"\t\t"0"\n'
-        f'\t"BytesToDownload"\t\t"{size_on_disk}"\n'
-        f'\t"BytesDownloaded"\t\t"{size_on_disk}"\n'
-        f'\t"BytesToStage"\t\t"0"\n'
-        f'\t"BytesStaged"\t\t"0"\n'
-        f'\t"TargetBuildID"\t\t"{buildid}"\n'
-        f'\t"AutoUpdateBehavior"\t\t"0"\n'
-        f'\t"AllowOtherDownloadsWhileRunning"\t\t"0"\n'
-        f'\t"ScheduledAutoUpdate"\t\t"0"\n'
-        f'\t"DownloadType"\t\t"1"\n'
-        f'\t"InstalledDepots"\n'
-        f'\t{{\n'
-        f'{installed_depots_block}\n'
-        f'\t}}\n'
-        f'\t"UserConfig"\n'
-        f'\t{{\n'
-        f'\t\t"language"\t\t"english"\n'
-        f'\t}}\n'
-        f'\t"MountedConfig"\n'
-        f'\t{{\n'
-        f'\t\t"language"\t\t"english"\n'
-        f'\t}}\n'
-        '}\n'
-    )
+
+    app_state: dict = {
+        "appid": appid,
+        "Universe": "1",
+        "name": game_name,
+        "StateFlags": "4",
+        "installdir": installdir,
+        "LastUpdated": str(int(time.time())),
+        "SizeOnDisk": str(size_on_disk),
+        "StagingSize": "0",
+        "buildid": buildid,
+        "LastOwner": last_owner,
+        "UpdateResult": "0",
+        "BytesToDownload": "0",
+        "BytesDownloaded": "0",
+        "BytesToStage": "0",
+        "BytesStaged": "0",
+        "TargetBuildID": buildid,
+        "AutoUpdateBehavior": "0",
+        "AllowOtherDownloadsWhileRunning": "0",
+        "ScheduledAutoUpdate": "0",
+        "DownloadType": "1",
+        "InstalledDepots": {},
+        "UserConfig": {"language": "english"},
+        "MountedConfig": {"language": "english"},
+    }
 
     try:
         if acf_path.exists():
             os.chmod(acf_path, 0o644)  # make writable if previously locked
-        acf_path.write_text(acf_content, encoding="utf-8")
+        vdf_dump(acf_path, {"AppState": app_state}, tabbed=True)
         os.chmod(acf_path, 0o444)
         print_fn(Fore.GREEN + f"ACF written: {acf_path}" + Style.RESET_ALL)
         return True

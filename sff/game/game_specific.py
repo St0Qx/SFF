@@ -618,13 +618,13 @@ class GameHandler:
         print(f"Game: {Fore.YELLOW}{game_name}{Style.RESET_ALL}")
         print(f"Folder: {Fore.YELLOW}{app_info.path}{Style.RESET_ALL}\n")
         from sff.game.crack_fix import apply_crack_fix as _apply_crack
-        success = _apply_crack(game_name, app_info.path)
+        success, message = _apply_crack(game_name, app_info.path)
         if success:
-            print("\n" + Fore.GREEN + "Fix applied successfully!" + Style.RESET_ALL)
+            print("\n" + Fore.GREEN + message + Style.RESET_ALL)
             print("You can now launch the game.")
         else:
-            print("\n" + Fore.RED + "Failed to apply fix." + Style.RESET_ALL)
-            print("Check the error messages above for details.")
+            print("\n" + Fore.RED + message + Style.RESET_ALL)
+        return success, message
 
     def manage_dlc_unlockers(self, app_info):
         from sff.dlc_unlockers.manager import UnlockerManager
@@ -793,8 +793,7 @@ class GameHandler:
             self.apply_multiplayer_fix(app_info)
             return (True, "Multiplayer fix applied.")
         elif choice == MainMenu.CRACK_FIX:
-            success = self.apply_crack_fix(app_info)
-            return (success, "Crack files applied" if success else "No crack selected or download failed")
+            return self.apply_crack_fix(app_info)
         elif choice == MainMenu.MANAGE_DLC_UNLOCKERS:
             self.manage_dlc_unlockers(app_info)
             return (True, "DLC unlockers updated.")

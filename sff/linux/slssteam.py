@@ -646,7 +646,7 @@ def setup_via_headcrab(steam_path: Path, print_fn=print) -> bool:
         if ok:
             print_fn(Fore.GREEN + "\n[headcrab] SLSsteam installation completed." + Style.RESET_ALL)
             steam_type = detect_steam_type()
-            _setup_config_from_extracted(Path(tempfile.gettempdir()) / "headcrab_extract", steam_type)
+            # headcrab.sh already writes config.yaml itself
             patch_slssteam_config(steam_type, print_fn)
             patch_steam_sh(steam_path, print_fn)
             create_steam_cfg(steam_path, print_fn)

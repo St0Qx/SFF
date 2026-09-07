@@ -26,7 +26,7 @@ from colorama import Fore, Style
 
 from sff.game.online_fix import _extract_archive_with_backup, _detect_archiver
 from sff.network.pixeldrain import _extract_pixeldrain_id, download_pixeldrain
-from sff.ui.prompts import prompt_select
+from sff.ui.prompts import prompt_confirm, prompt_select
 
 CRACK_JSON_URL = "https://raw.githubusercontent.com/KoriaPolis/CrakFiles/main/crackfiles.json"
 
@@ -86,12 +86,12 @@ def _extract_to_game_folder(archive_path: Path, game_folder: Path, game_name: st
             pass
 
 
-def apply_crack_fix(game_name: str, game_folder) -> bool:
+def apply_crack_fix(game_name: str, game_folder) -> tuple[bool, str]:
     game_folder = Path(game_folder)
 
     all_games = fetch_crack_games()
     if not all_games:
-        return False
+        return False, "Could not fetch the cracks list from GitHub."
 
     matches = search_crack_games(game_name, all_games)
 
@@ -126,12 +126,12 @@ def apply_crack_fix(game_name: str, game_folder) -> bool:
         cancellable=True,
     )
     if chosen_game is None:
-        return False
+        return False, "No crack selected."
 
     fixes = chosen_game.get("fixes", [])
     if not fixes:
         print(Fore.RED + "No download links for this game." + Style.RESET_ALL)
-        return False
+        return False, f"No download links available for {chosen_game.get('name', game_name)}."
 
     if len(fixes) == 1:
         chosen_fix = fixes[0]
@@ -145,27 +145,37 @@ def apply_crack_fix(game_name: str, game_folder) -> bool:
         ]
         chosen_fix = prompt_select("Select download source:", fix_options, cancellable=True)
         if chosen_fix is None:
-            return False
+            return False, "No download source selected."
 
     href = chosen_fix.get("href", "")
     if not href:
         print(Fore.RED + "No download URL." + Style.RESET_ALL)
-        return False
+        return False, "The selected fix has no download URL."
 
     file_id = _extract_pixeldrain_id(href)
     if not file_id:
         print(Fore.RED + f"Could not parse pixeldrain ID from: {href}" + Style.RESET_ALL)
-        return False
+        return False, f"Could not parse a pixeldrain ID from: {href}"
+
+    fix_label = chosen_fix.get("filename") or href
+    if not prompt_confirm(
+        f"Apply crack fix '{fix_label}' to {game_name}?\n\n"
+        f"This downloads and extracts files directly into:\n{game_folder}",
+        true_msg="Apply",
+        false_msg="Cancel",
+    ):
+        print(Fore.YELLOW + "Crack fix cancelled by user." + Style.RESET_ALL)
+        return False, "Cancelled — crack fix was not applied."
 
     temp_dir = Path(tempfile.mkdtemp(prefix="sff_crack_fix_"))
     try:
         archive_path = download_pixeldrain(file_id, temp_dir)
         if archive_path is None:
-            return False
+            return False, "Download failed (pixeldrain returned nothing)."
 
         if not archive_path.exists() or archive_path.stat().st_size == 0:
             print(Fore.RED + "Downloaded file is empty or missing." + Style.RESET_ALL)
-            return False
+            return False, "Downloaded file is empty or missing."
 
         print(
             Fore.GREEN
@@ -174,7 +184,7 @@ def apply_crack_fix(game_name: str, game_folder) -> bool:
         )
 
         if not _extract_to_game_folder(archive_path, game_folder, game_name):
-            return False
+            return False, "Extraction failed — check that an archiver (7-Zip/WinRAR) is available."
 
         print()
         print(Fore.GREEN + "=" * 60 + Style.RESET_ALL)
@@ -183,11 +193,11 @@ def apply_crack_fix(game_name: str, game_folder) -> bool:
         print(f"Game:   {game_name}")
         print(f"Folder: {game_folder}")
         print()
-        return True
+        return True, f"Crack fix '{fix_label}' applied to {game_name}."
 
     except Exception as e:
         print(Fore.RED + f"Error applying crack: {e}" + Style.RESET_ALL)
-        return False
+        return False, f"Error applying crack: {e}"
     finally:
         try:
             shutil.rmtree(temp_dir, ignore_errors=True)

@@ -130,7 +130,7 @@ class GameStatus:
     app_id: int
     status: str = "unknown"
     message: str = ""
-    _cached_at = 0.0
+    _cached_at: float = 0.0
 
 
 class StoreApiClient:

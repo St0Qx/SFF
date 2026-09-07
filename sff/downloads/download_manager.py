@@ -59,6 +59,7 @@ class DownloadItem:
     completed_at: float = 0.0
     retry_count: int = 0
     max_retries: int = 3
+    _download_func: Optional[Callable] = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -258,7 +259,7 @@ class DownloadManager:
             if self._cancel_event.is_set():
                 return False
             try:
-                if hasattr(item, '_download_func') and item._download_func:
+                if item._download_func:
                     def progress_cb(current, total):
                         item.downloaded_bytes = current
                         item.total_bytes = total

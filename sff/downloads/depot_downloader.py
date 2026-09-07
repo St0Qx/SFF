@@ -305,11 +305,13 @@ def run_download(
     steam_path: Path,
     print_fn=print,
     os_name: str | None = None,
+    force_ddmod: bool = False,
 ) -> Tuple[bool, int]:
     appid = str(game_data["appid"])
     depots = game_data.get("depots", {})
     manifests = dict(game_data.get("manifests", {}) or {})
     installdir = game_data.get("installdir") or f"App_{appid}"
+    target_os = (os_name or "windows").lower()
 
     # Auto-fill manifests from the staging dir for any selected depot
     # the caller did not pin a manifest for. The staging dir is what
@@ -374,61 +376,64 @@ def run_download(
             return False
 
     native_failed: list = []
-    try:
-        from sff.downloads.native_downloader import download_depot as _native_dl
-        print_fn(Fore.CYAN + "\n[Native] Starting Steam CDN download (no .NET required)" + Style.RESET_ALL)
-        for depot_id in selected_depots:
-            if _cancelled():
-                print_fn(Fore.YELLOW + "\n[cancelled] Stopping download" + Style.RESET_ALL)
-                return False, 0
-            depot_id_str = str(depot_id)
-            manifest_id = manifests.get(depot_id_str)
-            key_data = depots.get(depot_id_str, {})
-            key = key_data.get("key", "") if isinstance(key_data, dict) else ""
-            if not manifest_id or not key:
-                print_fn(Fore.YELLOW + f"Depot {depot_id_str}: native needs manifest+key, deferring to DDMod" + Style.RESET_ALL)
-                native_failed.append(depot_id)
-                continue
-            print_fn(
-                Fore.CYAN
-                + f"\n--- Downloading depot {depot_id_str} (native) ---"
-                + Style.RESET_ALL
-            )
-            try:
-                manifest_path = None
-                mf = MANIFESTS_TMP / f"{depot_id_str}_{manifest_id}.manifest"
-                if mf.exists():
-                    manifest_path = mf
-                ok, size = _native_dl(
-                    appid, depot_id_str, manifest_id, key, download_dir,
-                    print_fn=print_fn, os_filter=os_name or ("linux" if sys.platform.startswith("linux") else "windows"),
-                    steam_path=steam_path,
-                    manifest_path=manifest_path,
-                )
-                if ok:
-                    print_fn(Fore.GREEN + f"Depot {depot_id_str} downloaded ({size:,} bytes)" + Style.RESET_ALL)
-                else:
-                    print_fn(Fore.YELLOW + f"Depot {depot_id_str}: native download failed, deferring to DDMod" + Style.RESET_ALL)
+    if force_ddmod:
+        native_failed = list(selected_depots)
+        print_fn(Fore.CYAN + "\nUsing DepotDownloaderMod (native CDN downloader skipped)" + Style.RESET_ALL)
+    else:
+        try:
+            from sff.downloads.native_downloader import download_depot as _native_dl
+            print_fn(Fore.CYAN + "\n[Native] Starting Steam CDN download (no .NET required)" + Style.RESET_ALL)
+            for depot_id in selected_depots:
+                if _cancelled():
+                    print_fn(Fore.YELLOW + "\n[cancelled] Stopping download" + Style.RESET_ALL)
+                    return False, 0
+                depot_id_str = str(depot_id)
+                manifest_id = manifests.get(depot_id_str)
+                key_data = depots.get(depot_id_str, {})
+                key = key_data.get("key", "") if isinstance(key_data, dict) else ""
+                if not manifest_id or not key:
+                    print_fn(Fore.YELLOW + f"Depot {depot_id_str}: native needs manifest+key, deferring to DDMod" + Style.RESET_ALL)
                     native_failed.append(depot_id)
-            except Exception as e:
-                print_fn(Fore.RED + f"Native download failed for depot {depot_id_str}: {e}" + Style.RESET_ALL)
-                native_failed.append(depot_id)
-        if not native_failed:
-            try:
-                KEYS_TMP.unlink(missing_ok=True)
-            except Exception:
-                pass
-            total_size = _calculate_dir_size(download_dir)
-            print_fn(Fore.CYAN + f"Total size on disk: {total_size:,} bytes" + Style.RESET_ALL)
-            return True, total_size
-        print_fn(Fore.YELLOW + f"[Native] {len(native_failed)} depot(s) failed — using DepotDownloaderMod as backup" + Style.RESET_ALL)
-    except ImportError:
-        native_failed = list(selected_depots)
-        print_fn(Fore.YELLOW + "[Native] Native downloader not available, falling back to DDMod" + Style.RESET_ALL)
-    except Exception as e:
-        native_failed = list(selected_depots)
-        print_fn(Fore.YELLOW + f"[Native] Init failed ({e}), falling back to DDMod" + Style.RESET_ALL)
-
+                    continue
+                print_fn(
+                    Fore.CYAN
+                    + f"\n--- Downloading depot {depot_id_str} (native) ---"
+                    + Style.RESET_ALL
+                )
+                try:
+                    manifest_path = None
+                    mf = MANIFESTS_TMP / f"{depot_id_str}_{manifest_id}.manifest"
+                    if mf.exists():
+                        manifest_path = mf
+                    ok, size = _native_dl(
+                        appid, depot_id_str, manifest_id, key, download_dir,
+                        print_fn=print_fn, os_filter=target_os,
+                        steam_path=steam_path,
+                        manifest_path=manifest_path,
+                    )
+                    if ok:
+                        print_fn(Fore.GREEN + f"Depot {depot_id_str} downloaded ({size:,} bytes)" + Style.RESET_ALL)
+                    else:
+                        print_fn(Fore.YELLOW + f"Depot {depot_id_str}: native download failed, deferring to DDMod" + Style.RESET_ALL)
+                        native_failed.append(depot_id)
+                except Exception as e:
+                    print_fn(Fore.RED + f"Native download failed for depot {depot_id_str}: {e}" + Style.RESET_ALL)
+                    native_failed.append(depot_id)
+            if not native_failed:
+                try:
+                    KEYS_TMP.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                total_size = _calculate_dir_size(download_dir)
+                print_fn(Fore.CYAN + f"Total size on disk: {total_size:,} bytes" + Style.RESET_ALL)
+                return True, total_size
+            print_fn(Fore.YELLOW + f"[Native] {len(native_failed)} depot(s) failed — using DepotDownloaderMod as backup" + Style.RESET_ALL)
+        except ImportError:
+            native_failed = list(selected_depots)
+            print_fn(Fore.YELLOW + "[Native] Native downloader not available, falling back to DDMod" + Style.RESET_ALL)
+        except Exception as e:
+            native_failed = list(selected_depots)
+            print_fn(Fore.YELLOW + f"[Native] Init failed ({e}), falling back to DDMod" + Style.RESET_ALL)
     ddmod_depots = list(native_failed) if native_failed else list(selected_depots)
 
     dotnet_path = get_dotnet_path()
@@ -469,7 +474,6 @@ def run_download(
     deps_dir = get_deps_dir()
     total_depots = len(ddmod_depots)
     all_ok = True
-    target_os = (os_name or ("linux" if sys.platform.startswith("linux") else "windows")).lower()
 
     for i, depot_id in enumerate(ddmod_depots):
         if _cancelled():
@@ -631,6 +635,8 @@ def resolve_target_os(
 ) -> str:
     """Pick the effective OS for both depot selection and file filtering.
 
+    Defaults to Windows; Linux is only targeted when explicitly requested.
+
     Linux games with no Linux depot run through Proton, which needs the
     Windows depots AND the Windows file filter — same fallback Steam
     applies. Only triggers when the selection has platform-specific depots
@@ -638,7 +644,7 @@ def resolve_target_os(
     target; callers must pass the result to both filter_depots_by_os and
     run_download so the two layers agree.
     """
-    target = (os_name or ("linux" if sys.platform.startswith("linux") else "windows")).lower()
+    target = (os_name or "windows").lower()
     if target != "linux" or not app_info:
         return target
     depots_section = app_info.get("depots", {}) if isinstance(app_info, dict) else {}
@@ -674,7 +680,7 @@ def filter_depots_by_os(
     """
     if not app_info:
         return selected_depots
-    target_os = (os_name or ("linux" if sys.platform.startswith("linux") else "windows")).lower()
+    target_os = (os_name or "windows").lower()
     if target_os == "all":
         target_os = ""  # falsy skips the oslist/name-tag filters below; Steam China still filtered
     depots_section = app_info.get("depots", {}) if isinstance(app_info, dict) else {}

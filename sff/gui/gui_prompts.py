@@ -66,7 +66,7 @@ def _on_gui_thread(func):
     _invoker._signal.emit((func, container))
     if not container["done"].wait(timeout=30.0):
         # Dialog may be invisible on Wayland — release worker thread
-        container["result"] = None
+        container["value"] = None
         container["done"].set()
     if container["error"] is not None:
         raise container["error"]

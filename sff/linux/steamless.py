@@ -84,6 +84,10 @@ def process_game(game_dir: Path, game_name: str = "", print_fn=print) -> bool:
         return False
 
     dotnet_path = dotnet.get_dotnet_path()
+    if not dotnet_path:
+        print_fn(Fore.RED + ".NET 9 not available." + Style.RESET_ALL)
+        return False
+
     dll = get_steamless_dir() / "Steamless.CLI.dll"
     if not dll.exists():
         print_fn(Fore.RED + f"Steamless.CLI.dll not found at {dll}" + Style.RESET_ALL)
