@@ -176,8 +176,12 @@ window.Downloads = (function() {
         // would otherwise create a second row and leave the real one active.
         var id = data.app_id || data.task || 'unknown';
         if (data.paused) {
-            // The queue section shows the paused item; drop the active row.
-            delete _downloads[id];
+            // Keep the entry so the queue row can read its last progress;
+            // mark it paused so _render skips it in both Active and History.
+            if (_downloads[id]) {
+                _downloads[id].active = false;
+                _downloads[id].paused = true;
+            }
             _render();
             return;
         }
@@ -213,6 +217,7 @@ window.Downloads = (function() {
 
         Object.keys(_downloads).forEach(function(id) {
             var dl = _downloads[id];
+            if (dl.paused) return;  // shown in the queue section
             if (dl.active) {
                 activeItems.push(dl);
             } else {
