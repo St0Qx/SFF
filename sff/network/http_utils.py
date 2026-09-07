@@ -163,7 +163,12 @@ async def get_request(
 def get_request_raw(url):
     while True:
         try:
-            return httpx.get(url, timeout=120).content
+            resp = httpx.get(url, timeout=120)
+            # CDN error pages (Akamai "Error" HTML) arrive with a non-200
+            # status; saving them as manifest data poisons depotcache.
+            if resp.status_code != 200:
+                return None
+            return resp.content
         except httpx.HTTPError as e:
             print(f"Network error: {repr(e)}")
             if not prompt_confirm("Try again?"):

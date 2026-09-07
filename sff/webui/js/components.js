@@ -645,7 +645,7 @@ window.Components = (function() {
         _hideImages = !!val;
     }
 
-    function showConfirm(title, message, onYes, onNo) {
+    function showConfirm(title, message, onYes, onNo, yesLabel, noLabel) {
         var modal = document.getElementById('confirm-dialog');
         var titleEl = document.getElementById('confirm-dialog-title');
         var msgEl = document.getElementById('confirm-dialog-message');
@@ -655,6 +655,8 @@ window.Components = (function() {
 
         if (titleEl) titleEl.textContent = title || 'Confirm';
         if (msgEl) msgEl.textContent = message || '';
+        if (yesBtn) yesBtn.textContent = yesLabel || 'Yes';
+        if (noBtn) noBtn.textContent = noLabel || 'No';
 
         var cleanup = function() {
             hideModal('confirm-dialog');

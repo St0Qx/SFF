@@ -39,6 +39,18 @@ PROTOBUF_METADATA_MAGIC = 0x1F4812BE
 PROTOBUF_SIGNATURE_MAGIC = 0x1B81B817
 PROTOBUF_ENDOFMANIFEST_MAGIC = 0x32C415AB
 
+_MANIFEST_MAGIC_BYTES = struct.pack("<I", PROTOBUF_PAYLOAD_MAGIC)
+
+
+def has_manifest_magic(path) -> bool:
+    """True if the file starts with the Steam manifest payload magic.
+    Catches CDN error pages (HTML) saved as .manifest files."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == _MANIFEST_MAGIC_BYTES
+    except OSError:
+        return False
+
 
 def _stream_from_manifest_bytes(data: bytes):
     return read_nth_file_from_zip_bytes(0, data) or io.BytesIO(data)

@@ -204,6 +204,13 @@ def _bridge_download_game_with_source(bridge, app_id, source, request_update='0'
             return _bridge_run_linux_fastest(bridge, app_id)
 
     def _on_done(result):
+        if result == "source_empty":
+            bridge._emit_task_result(
+                "download_fastest", False,
+                "The selected source doesn't have this game.",
+                app_id=app_id, source_empty=True,
+            )
+            return
         success = result is True
         bridge._emit_task_result(
             "download_fastest",
@@ -378,21 +385,10 @@ def _bridge_run_windows_fastest(bridge, app_id, source='', request_update=False,
             request_update=request_update,
         )
         if not lua_path:
-            # Surface a clear failure to the UI so the bar doesnt sit at
-            # 10% forever. download_lua_direct returns None on timeout
-            # against the Steam CM (30s ceiling) or any other source
-            # error. The user can switch source and retry.
-            bridge.download_progress.emit(json.dumps({
-                "task": "download_fastest",
-                "app_id": app_id,
-                "status": (
-                    "Lua download failed. Steam CM may be down or the "
-                    "selected source returned nothing. Try a different "
-                    "provider (Hubcap / MidraEveryDay) and retry."
-                ),
-                "progress": 0,
-            }))
-            return False
+            # download_lua_direct returns None on timeout against the Steam
+            # CM (30s ceiling) or any other source error. The sentinel tells
+            # _on_done to offer a source switch instead of a dead progress bar.
+            return "source_empty"
 
         saved_lua = saved_lua_root
         backup_target = saved_lua / f"{app_id}.lua"
@@ -525,7 +521,7 @@ def _bridge_run_linux_fastest(bridge, app_id):
                 manifest_override[str(depot_id)] = str(entries[0].manifest_id)
 
         if not manifest_override:
-            return False
+            return "source_empty"
 
         bridge.download_progress.emit(json.dumps({
             "app_id": app_id, "status": "Downloading via DepotDownloader", "progress": 30
@@ -2112,7 +2108,7 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
 
             selected_depots = list(depots_dict.keys())
             if not selected_depots:
-                return (False, "No depots with decryption keys found in Lua")
+                return (False, "source_empty")
 
             # If no manifests resolved for any selected depot, DDMod will
             # fall back to anonymous CDN fetch and 401. Give the user a
@@ -2480,6 +2476,13 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
             ok, msg = result[0], result[1]
         else:
             ok, msg = False, "Download failed"
+        if not ok and msg == "source_empty":
+            bridge._emit_task_result(
+                "download_ddmod", False,
+                "The selected source doesn't have this game.",
+                app_id=app_id, source_empty=True,
+            )
+            return
         if ok and source in ("hubcap", "ryuu"):
             QTimer.singleShot(1000, bridge._maybe_auto_contribute_provider)
         game_data = getattr(bridge, '_current_game_data', None)

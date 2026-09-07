@@ -216,6 +216,21 @@ window.App = (function() {
                     if (result.paused) {
                         return;
                     }
+                    // The selected source has no lua for this game: offer a
+                    // source switch instead of a dead error toast.
+                    if (result.source_empty) {
+                        var _appId = String(result.app_id || '');
+                        var _btn = document.querySelector('.btn-download[data-appid="' + _appId + '"]');
+                        var _name = (_btn && _btn.dataset.name) || ('App ' + _appId);
+                        Components.showConfirm(
+                            'Source unavailable',
+                            'The selected source doesn\'t have ' + _name + '. Pick a different source and try again.',
+                            function() { Components.showDownloadModal(_appId, _name, _platform); },
+                            null,
+                            'Pick Source', 'Cancel'
+                        );
+                        return;
+                    }
                     if (result.message) {
                         Components.showToast(
                             result.success ? 'success' : 'error',

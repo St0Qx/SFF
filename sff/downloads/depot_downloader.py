@@ -121,6 +121,14 @@ def _copy_manifests_to_temp(steam_path: Path, manifests: dict) -> None:
         for depotcache in depotcache_candidates:
             src = depotcache / filename
             if src.exists():
+                # A CDN error page saved as a manifest makes both engines
+                # crash on it (-6 / "download failed"). Drop the poison so
+                # the next fetch re-downloads real bytes.
+                from sff.manifest.crypto import has_manifest_magic
+                if not has_manifest_magic(src):
+                    logger.debug("depot %s: deleting corrupt cached manifest %s", depot_id, src)
+                    src.unlink(missing_ok=True)
+                    continue
                 shutil.copy2(src, dst)
                 break
 

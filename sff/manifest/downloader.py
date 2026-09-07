@@ -36,7 +36,7 @@ from sff.network.http_utils import (
     parse_manifest_request_code,
 )
 from sff.manifest.manifesthub_key import get_manifesthub_api_key
-from sff.manifest.crypto import decrypt_and_save_manifest
+from sff.manifest.crypto import decrypt_and_save_manifest, has_manifest_magic
 from sff.manifest.id_resolver import (
     IManifestStrategy,
     InnerDepotManifestStrategy,
@@ -223,6 +223,13 @@ class ManifestDownloader:
             else:
                 # ManifestHub / GitHub already return raw manifest bytes
                 dest.write_bytes(raw)
+        # Steam manifests start with magic 0x71F617D0. CDN error pages
+        # (Akamai HTML) saved as manifests poison depotcache and make
+        # every later download of that GID crash.
+        if dest.exists() and not has_manifest_magic(dest):
+            logger.debug("Rejected non-manifest bytes for depot %s (%s)", depot_id, manifest_id)
+            dest.unlink(missing_ok=True)
+            return None
         if dest.exists():
             sync_manifest_to_config_depotcache(self.steam_path, dest)
             return dest
