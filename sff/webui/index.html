@@ -1530,6 +1530,7 @@ start YourGame-Shipping.exe</pre>
                         <li style="margin-bottom:8px;">Find the line starting with <code>exec</code> near the bottom. <strong>Before</strong> that line, insert:<br><code style="background:var(--btn-bg);padding:4px 8px;border-radius:3px;display:inline-block;margin:4px 0;">export LD_AUDIT="/home/deck/.local/share/SLSsteam/library-inject.so:/home/deck/.local/share/SLSsteam/SLSsteam.so"</code></li>
                         <li style="margin-bottom:8px;"><strong>Save and close.</strong></li>
                         <li style="margin-bottom:8px;"><strong>Test in Desktop Mode first:</strong> launch Steam normally. If it opens and SLSsteam loads (you'll see a notification), Gaming Mode should work.</li>
+                        <li style="margin-bottom:8px;"><strong>Enable SafeMode:</strong> in SLSsteam's <code>config.yaml</code>, set <code>SafeMode: yes</code>. This makes SLSsteam disable itself instead of crashing Steam when a client update changes <code>steamclient.so</code> (the <em>Patch Gaming Mode</em> button below does this for you automatically).</li>
                         <li style="margin-bottom:8px;"><strong>Your backup is at:</strong> <code>/usr/bin/steam-jupiter.bak</code></li>
                     </ol>
                 </div>

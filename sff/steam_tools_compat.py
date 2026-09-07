@@ -24,8 +24,10 @@
 """
 
 
+import contextlib
 import logging
 import shutil
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -34,15 +36,45 @@ STPLUGIN_DIR = "stplug-in"
 CONFIG_DEPOTCACHE_SUBDIR = ("config", "depotcache")
 
 
+@contextlib.contextmanager
+def _steam_stopped_for_stplugin_write(steam_path):
+    """SLSsteam advises against hot-reloading Luas while Steam is running."""
+    if not sys.platform.startswith("linux"):
+        yield
+        return
+    was_running = False
+    try:
+        from sff.core.processes import is_proc_running
+        was_running = is_proc_running("steam")
+    except Exception:
+        pass
+    if was_running:
+        try:
+            from sff.linux.steam_process import kill_steam
+            kill_steam(print_fn=lambda _m: None)
+        except Exception:
+            was_running = False
+    try:
+        yield
+    finally:
+        if was_running:
+            try:
+                from sff.linux.steam_process import start_steam
+                start_steam(print_fn=lambda _m: None, steam_path=steam_path)
+            except Exception:
+                pass
+
+
 def install_lua_to_steam(steam_path, app_id, lua_source_path):
     if not lua_source_path.exists():
         logger.debug("LUA source not found: %s", lua_source_path)
         return False
     dest_dir = steam_path / "config" / STPLUGIN_DIR
     try:
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_file = dest_dir / f"{app_id}.lua"
-        shutil.copy2(lua_source_path, dest_file)
+        with _steam_stopped_for_stplugin_write(steam_path):
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_file = dest_dir / f"{app_id}.lua"
+            shutil.copy2(lua_source_path, dest_file)
         logger.info("Installed LUA to Steam config: %s", dest_file)
         return True
     except OSError as e:
@@ -94,18 +126,19 @@ def remove_lua_from_steam(steam_path, app_id: str | int):
     dest_dir = steam_path / "config" / STPLUGIN_DIR
     dest_file = dest_dir / f"{app_id}.lua"
     try:
-        if dest_file.exists():
-            dest_file.unlink()
-            logger.info("Removed LUA from Steam config: %s", dest_file)
-        # Also sweep stray <steam>/config/<app_id>.lua files. A bug in the
-        # 6.2.4 download path landed the source lua next to stplug-in/
-        # before install_lua_to_steam copied it into stplug-in/. The fix
-        # routes downloads to saved_lua/ instead, but existing user
-        # installs may still carry the stray; clean them on every remove.
-        stray = steam_path / "config" / f"{app_id}.lua"
-        if stray.exists():
-            stray.unlink()
-            logger.info("Removed stray Steam config LUA: %s", stray)
+        with _steam_stopped_for_stplugin_write(steam_path):
+            if dest_file.exists():
+                dest_file.unlink()
+                logger.info("Removed LUA from Steam config: %s", dest_file)
+            # Also sweep stray <steam>/config/<app_id>.lua files. A bug in the
+            # 6.2.4 download path landed the source lua next to stplug-in/
+            # before install_lua_to_steam copied it into stplug-in/. The fix
+            # routes downloads to saved_lua/ instead, but existing user
+            # installs may still carry the stray; clean them on every remove.
+            stray = steam_path / "config" / f"{app_id}.lua"
+            if stray.exists():
+                stray.unlink()
+                logger.info("Removed stray Steam config LUA: %s", stray)
         return True
     except OSError as e:
         logger.warning("Could not remove LUA from Steam config: %s", e)
