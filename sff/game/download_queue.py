@@ -69,6 +69,7 @@ def _load():
                     "added_at": float(e.get("added_at") or time.time()),
                     "started_at": float(e.get("started_at") or 0) or None,
                     "error": str(e.get("error") or ""),
+                    "paused": bool(e.get("paused", False)),
                 })
         return out
     except Exception as e:
@@ -105,6 +106,7 @@ def enqueue(app_id, name="", source="oureveryday"):
         "added_at": time.time(),
         "started_at": None,
         "error": "",
+        "paused": False,
     }
     items.append(item)
     _save(items)
@@ -162,7 +164,19 @@ def mark_started(item_id):
 
 def mark_finished(app_id, success, error=""):
     """Mark a downloading item done/failed by app id. A cancelled item is
-    dropped from the queue instead of being marked failed."""
+    dropped from the queue instead of being marked failed. A paused item
+    goes back to queued (still paused) so it survives a restart and waits
+    for an explicit resume."""
+    if is_paused(app_id):
+        clear_pause(app_id)
+        items = _load()
+        for e in items:
+            if e["app_id"] == str(app_id):
+                e["state"] = STATE_QUEUED
+                e["paused"] = True
+                e["started_at"] = None
+        _save(items)
+        return True
     if is_cancelled(app_id):
         clear_cancel(app_id)
         _save([e for e in _load() if e["app_id"] != str(app_id)])
@@ -221,6 +235,94 @@ def cancel_item(item_id):
             else:
                 logger.debug("queue: dropped queued item %s (app %s)", item_id, e["app_id"])
                 _save([x for x in items if x["id"] != str(item_id)])
+            return e
+    return None
+
+
+# ── Pause ─────────────────────────────────────────────────────────────
+# Pause reuses the cancel stop mechanism (engines poll is_cancelled), but
+# the item stays in the persisted queue as queued+paused. The native
+# downloader SHA1-verifies chunks on disk at start, so resuming picks up
+# mid-file instead of from zero.
+_paused_apps: set = set()
+
+
+def request_pause(app_id):
+    with _cancel_lock:
+        _paused_apps.add(str(app_id))
+    # The engines only watch is_cancelled; flag it so the running task
+    # stops. mark_finished checks is_paused first and keeps the item.
+    request_cancel(app_id)
+
+
+def clear_pause(app_id):
+    with _cancel_lock:
+        _paused_apps.discard(str(app_id))
+    clear_cancel(app_id)
+
+
+def is_paused(app_id):
+    with _cancel_lock:
+        return str(app_id) in _paused_apps
+
+
+def pause_item(item_id):
+    """Pause a queue item. Returns the item dict, or None if unknown."""
+    items = _load()
+    for e in items:
+        if e["id"] == str(item_id):
+            if e["state"] == STATE_DOWNLOADING:
+                logger.debug("queue: pause requested for app %s (in flight)", e["app_id"])
+                request_pause(e["app_id"])
+            else:
+                logger.debug("queue: paused queued item %s (app %s)", item_id, e["app_id"])
+                e["paused"] = True
+                _save(items)
+            return e
+    return None
+
+
+def pause_by_app_id(app_id, name="", source="oureveryday"):
+    """Pause a running download by app id, creating the queue entry when
+    the download was started directly (not through the queue). The engine
+    stop is async: mark_finished flips the item to queued+paused once the
+    task reports back."""
+    app_id = str(app_id)
+    items = _load()
+    for e in items:
+        if e["app_id"] == app_id:
+            e["paused"] = True
+            _save(items)
+            break
+    else:
+        item = {
+            "id": uuid.uuid4().hex,
+            "app_id": app_id,
+            "name": str(name or "").strip() or f"App {app_id}",
+            "source": str(source or "oureveryday"),
+            "state": STATE_DOWNLOADING,
+            "added_at": time.time(),
+            "started_at": time.time(),
+            "error": "",
+            "paused": True,
+        }
+        items.append(item)
+        _save(items)
+    request_pause(app_id)
+
+
+def resume_item(item_id):
+    """Un-pause a queue item so the next advance picks it up."""
+    items = _load()
+    for e in items:
+        if e["id"] == str(item_id):
+            e["paused"] = False
+            if e["state"] not in (STATE_QUEUED, STATE_DOWNLOADING):
+                e["state"] = STATE_QUEUED
+                e["error"] = ""
+                e["started_at"] = None
+            _save(items)
+            clear_pause(e["app_id"])
             return e
     return None
 

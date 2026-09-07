@@ -81,13 +81,15 @@ def parse_lua_contents(contents, path):
     depot_dec_key = _DEPOT_DEC_KEY_REGEX.findall(contents)
     if not depot_dec_key:
         return None
-    # The base game is the keyless addappid(N) entry; depots carry keys.
-    # Fall back to the numeric filename before guessing from content.
+    # luas are named <appid>.lua, so a numeric filename beats guessing
+    # from content: a DLC appended to the base game's lua adds a keyless
+    # addappid(DLC) entry, and taking the first keyless id would make
+    # the DLC the "app" (manifests then resolve against the wrong appinfo).
     stem = path.stem if path is not None else ""
-    if ids_with_no_key:
-        app_id = ids_with_no_key[0]
-    elif stem.isdigit():
+    if stem.isdigit():
         app_id = stem
+    elif ids_with_no_key:
+        app_id = ids_with_no_key[0]
     else:
         app_id = any_addappid.group(1)
     depot_pairs = [DepotKeyPair(*x) for x in depot_dec_key]

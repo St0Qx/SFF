@@ -673,6 +673,15 @@ class WebBridge(QObject):
     def _emit_task_result(self, task_name, success, message="", **extra):
         data = {"task": task_name, "success": success, "message": message}
         data.update(extra)
+        # A download stopped by Pause reports as paused, not failed, so the
+        # UI drops the active row instead of showing a red Failed entry.
+        if task_name in ("download_fastest", "download_ddmod") and extra.get("app_id"):
+            try:
+                from sff.game import download_queue as _dq
+                if _dq.is_paused(str(extra["app_id"])):
+                    data["paused"] = True
+            except Exception:
+                pass
         self.task_finished.emit(json.dumps(data))
         # Download queue bookkeeping: downloads started by the queue
         # advance the FIFO when they finish (or fail).
@@ -1139,9 +1148,10 @@ class WebBridge(QObject):
             }))
             if hasattr(self._ui, 'download_manager') and self._ui.download_manager:
                 try:
+                    from sff.network.http_utils import get_game_name
                     dl_id = self._ui.download_manager.track_external(
                         app_id=app_id,
-                        game_name=parsed.name if hasattr(parsed, 'name') else f"App {app_id}",
+                        game_name=get_game_name(app_id) or f"App {app_id}",
                     )
                     self._ui.download_manager.complete_external(dl_id, success=True)
                 except Exception as e:
@@ -1771,7 +1781,8 @@ class WebBridge(QObject):
             concurrency = int(snap["concurrency"])
             items = snap["items"]
             active = [i for i in items if i["state"] == _dq.STATE_DOWNLOADING]
-            queued = [i for i in items if i["state"] == _dq.STATE_QUEUED]
+            queued = [i for i in items
+                      if i["state"] == _dq.STATE_QUEUED and not i.get("paused")]
             free = concurrency - len(active)
             for item in queued[:free]:
                 if not _dq.mark_started(item["id"]):
@@ -1871,6 +1882,33 @@ class WebBridge(QObject):
                 else:
                     # Queued item: engine never touched it, delete now.
                     self._delete_queue_app_files(str(item["app_id"]))
+        finally:
+            self._emit_download_queue_state()
+
+    @pyqtSlot(str)
+    def download_queue_pause_item(self, item_id):
+        try:
+            from sff.game import download_queue as _dq
+            _dq.pause_item(item_id)
+        finally:
+            self._emit_download_queue_state()
+
+    @pyqtSlot(str)
+    def download_queue_resume_item(self, item_id):
+        try:
+            from sff.game import download_queue as _dq
+            _dq.resume_item(item_id)
+        finally:
+            self._advance_download_queue()
+
+    @pyqtSlot(str, str, str)
+    def download_pause_active(self, app_id, name, source):
+        """Pause a running download that isn't in the queue (started
+        directly from the Store tab). Saves it into the persistent queue
+        as paused so a restart picks it back up on Resume."""
+        try:
+            from sff.game import download_queue as _dq
+            _dq.pause_by_app_id(app_id, name, source or "oureveryday")
         finally:
             self._emit_download_queue_state()
 

@@ -1400,6 +1400,7 @@ select:focus-visible,
 .queue-badge-downloading { background: rgba(74,158,255,0.25); }
 .queue-badge-done { background: rgba(40,167,69,0.25); }
 .queue-badge-failed { background: rgba(220,53,69,0.25); }
+.queue-badge-paused { background: rgba(224,160,48,0.25); }
 
 /* ── Discord corner links ─────────────────────────────────────── */
 .discord-corner-link {

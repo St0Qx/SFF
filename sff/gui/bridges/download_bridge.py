@@ -186,8 +186,14 @@ def _bridge_download_game_with_source(bridge, app_id, source, request_update='0'
         bridge._emit_task_result("download_fastest", False, f"Invalid App ID: '{app_id}'")
         return
     def _do():
+        try:
+            from sff.network.http_utils import get_game_name
+            _name = get_game_name(app_id) or ""
+        except Exception:
+            _name = ""
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Starting", "progress": 0
+            "app_id": app_id, "name": _name or f"App {app_id}",
+            "status": "Starting", "progress": 0
         }))
         # Local source: bypass all API calls, import directly
         if source == "local":
@@ -471,9 +477,10 @@ def _bridge_run_windows_fastest(bridge, app_id, source='', request_update=False,
         }))
         if hasattr(bridge._ui, 'download_manager') and bridge._ui.download_manager:
             try:
+                from sff.network.http_utils import get_game_name
                 dl_id = bridge._ui.download_manager.track_external(
                     app_id=app_id,
-                    game_name=parsed.name if hasattr(parsed, 'name') else f"App {app_id}",
+                    game_name=get_game_name(app_id) or f"App {app_id}",
                 )
                 bridge._ui.download_manager.complete_external(dl_id, success=True)
             except Exception as e:

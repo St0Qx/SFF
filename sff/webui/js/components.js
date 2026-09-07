@@ -285,7 +285,8 @@ window.Components = (function() {
         var cancelHtml = '';
         if (download.active && download.id && download.id !== 'unknown') {
             cancelHtml =
-                '<div class="download-actions" style="display:flex;align-items:center;">' +
+                '<div class="download-actions" style="display:flex;align-items:center;gap:6px;">' +
+                    '<button class="btn btn-sm" data-pause-appid="' + escapeHtml(download.id) + '">Pause</button>' +
                     '<button class="btn btn-sm" data-cancel-appid="' + escapeHtml(download.id) + '">Cancel</button>' +
                 '</div>';
         }

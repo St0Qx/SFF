@@ -76,6 +76,12 @@ window.Downloads = (function() {
                 var id = btn.dataset.itemId;
                 if (btn.dataset.queueAction === 'retry') {
                     Bridge.call('download_queue_retry', id);
+                } else if (btn.dataset.queueAction === 'pause') {
+                    btn.disabled = true;
+                    btn.textContent = 'Pausing…';
+                    Bridge.call('download_queue_pause_item', id);
+                } else if (btn.dataset.queueAction === 'resume') {
+                    Bridge.call('download_queue_resume_item', id);
                 } else if (btn.dataset.queueAction === 'cancel') {
                     var row = btn.closest('.download-item');
                     var nameEl = row && row.querySelector('.download-name');
@@ -116,6 +122,17 @@ window.Downloads = (function() {
         var activeList = document.getElementById('downloads-active-list');
         if (activeList) {
             activeList.addEventListener('click', function(e) {
+                var pauseBtn = e.target.closest('[data-pause-appid]');
+                if (pauseBtn) {
+                    var appid = pauseBtn.dataset.pauseAppid;
+                    pauseBtn.disabled = true;
+                    pauseBtn.textContent = 'Pausing…';
+                    var prow = pauseBtn.closest('.download-item');
+                    var pname = prow && prow.querySelector('.download-item-name');
+                    Bridge.call('download_pause_active', appid,
+                        pname ? pname.textContent : '', 'oureveryday');
+                    return;
+                }
                 var btn = e.target.closest('[data-cancel-appid]');
                 if (!btn) return;
                 _pendingActiveCancel = btn.dataset.cancelAppid;
@@ -157,6 +174,12 @@ window.Downloads = (function() {
         // app_id first: task_finished carries task='download_ddmod', which
         // would otherwise create a second row and leave the real one active.
         var id = data.app_id || data.task || 'unknown';
+        if (data.paused) {
+            // The queue section shows the paused item; drop the active row.
+            delete _downloads[id];
+            _render();
+            return;
+        }
         if (_downloads[id]) {
             _downloads[id].active = false;
             _downloads[id].status = data.success ? 'Completed' : 'Failed';
@@ -242,8 +265,8 @@ window.Downloads = (function() {
     }
 
     function _buildQueueRow(item) {
-        var stateLabel = item.state;
-        var badgeClass = 'queue-badge-' + item.state;
+        var stateLabel = item.paused ? 'paused' : item.state;
+        var badgeClass = 'queue-badge-' + (item.paused && item.state === 'queued' ? 'paused' : item.state);
         var actions = '';
         if (item.state === 'failed') {
             actions += '<button class="btn btn-sm" data-queue-action="retry" data-item-id="' + Components.escapeHtml(item.id) + '">Retry</button>';
@@ -252,8 +275,12 @@ window.Downloads = (function() {
             if (_cancelling[item.id]) {
                 actions += '<button class="btn btn-sm" disabled>Cancelling…</button>';
             } else {
+                actions += '<button class="btn btn-sm" data-queue-action="pause" data-item-id="' + Components.escapeHtml(item.id) + '">Pause</button>';
                 actions += '<button class="btn btn-sm" data-queue-action="cancel" data-item-id="' + Components.escapeHtml(item.id) + '">Cancel</button>';
             }
+        } else if (item.paused) {
+            actions += '<button class="btn btn-sm" data-queue-action="resume" data-item-id="' + Components.escapeHtml(item.id) + '">Resume</button>';
+            actions += '<button class="btn btn-sm" data-queue-action="cancel" data-item-id="' + Components.escapeHtml(item.id) + '">Cancel</button>';
         } else {
             actions += '<button class="btn btn-sm" data-queue-action="remove" data-item-id="' + Components.escapeHtml(item.id) + '">Remove</button>';
         }
@@ -293,7 +320,7 @@ window.Downloads = (function() {
                 var dl = _downloads[String(item.app_id)];
                 var progress = dl && typeof dl.progress === 'number' ? dl.progress : 0;
                 var row = _queueRowEls[item.id];
-                var sig = item.state + '|' + item.source + '|' + (item.name || '') + '|' + (item.error || '') + '|' + !!_cancelling[item.id];
+                var sig = item.state + '|' + item.source + '|' + (item.name || '') + '|' + (item.error || '') + '|' + !!_cancelling[item.id] + '|' + !!item.paused;
                 if (!row || row.parentNode !== listEl || row.dataset.sig !== sig) {
                     var fresh = _buildQueueRow(item);
                     fresh.dataset.sig = sig;

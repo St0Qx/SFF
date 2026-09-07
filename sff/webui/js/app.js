@@ -211,6 +211,11 @@ window.App = (function() {
                     if (result.task === 'lure_fix' || result.task === 'update_check') {
                         return;
                     }
+                    // A paused download reports as a stopped task; the
+                    // Downloads tab shows the paused queue row instead.
+                    if (result.paused) {
+                        return;
+                    }
                     if (result.message) {
                         Components.showToast(
                             result.success ? 'success' : 'error',
