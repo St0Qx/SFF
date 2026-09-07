@@ -1018,12 +1018,16 @@ def _bridge_pin_manifest_ids(bridge, app_id, manifest_override_json):
             return (False, "No depots to pin")
         from sff.linux.yaml_config import add_manifest_id, get_user_config_path, is_additional_app
         config_path = get_user_config_path()
+        if not config_path.exists():
+            return (False, "SLSsteam config.yaml not found — pin skipped.")
         if is_additional_app(config_path, str(app_id)):
             # DisableUpdates already covers unowned/shared apps globally.
             return (True, "This app is unowned (uses DisableUpdates) — no per-depot pin needed.")
-        for depot_id, manifest_id in manifest_override.items():
-            add_manifest_id(config_path, str(depot_id), str(manifest_id))
-        return (True, f"Pinned {len(manifest_override)} depot manifest ID(s) to SLSsteam config.")
+        newly = sum(1 for d, m in manifest_override.items()
+                    if add_manifest_id(config_path, str(d), str(m)))
+        already = len(manifest_override) - newly
+        return (True, f"Pinned {newly} depot manifest ID(s) to SLSsteam config"
+                      + (f" ({already} already set)." if already else "."))
 
     def _on_done(result):
         ok, msg = result if isinstance(result, tuple) else (False, "Pin failed")

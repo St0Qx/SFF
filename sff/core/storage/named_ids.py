@@ -60,7 +60,11 @@ def _known_depot_ids(folder: Path) -> set[str]:
             continue
         if not parsed:
             continue
-        depot_ids.update(str(d.depot_id) for d in parsed.depots)
+        # parsed.depots includes the keyless base-app addappid entry, so
+        # drop the app's own ID or the backfill skips every lua.
+        depot_ids.update(
+            str(d.depot_id) for d in parsed.depots if str(d.depot_id) != str(parsed.app_id)
+        )
     return depot_ids
 
 

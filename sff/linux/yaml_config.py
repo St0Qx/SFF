@@ -493,8 +493,14 @@ def is_additional_app(config_path: Path, app_id: str) -> bool:
     content = _read_config(config_path)
     if content is None:
         return False
+    start = _get_section_start(content, _RE_ADDITIONAL_APPS)
+    if start is None:
+        return False
+    # Search only inside the section, otherwise "- 480" under FakeAppIds
+    # matches and the app is wrongly treated as unowned.
+    section = content[start:_get_section_end(content, start, _RE_NEXT_KEY_SIMPLE)]
     pat = re.compile(rf"^\s*-\s*{re.escape(app_id)}\s*(?:#.*)?$", re.MULTILINE)
-    return bool(pat.search(content))
+    return bool(pat.search(section))
 
 
 def remove_additional_app(config_path: Path, app_id: str) -> bool:

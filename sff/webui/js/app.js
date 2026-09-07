@@ -2374,16 +2374,15 @@ window.App = (function() {
         var method = window._olderVersionMethod || 'ddmod';
         var source = window._olderVersionSource || 'oureveryday';
 
-        // SLSsteam (Linux-only) is what actually enforces a pin — Steam
-        // Native/LumaCore handles ownership differently and has no
-        // config.yaml to pin against.
-        if (method !== 'steam_native' && window.confirm(
-            "Pin this version so Steam doesn't ask for an update or update the game?"
-        )) {
-            Bridge.call('pin_manifest_ids', appId, JSON.stringify(manifest_override));
-        }
-
         _withLibraryPick(function() {
+            // SLSsteam (Linux-only) is what actually enforces a pin — Steam
+            // Native/LumaCore handles ownership differently and has no
+            // config.yaml to pin against.
+            if (method !== 'steam_native' && _platform !== 'win32' && window.confirm(
+                "Pin this version so Steam doesn't ask for an update or update the game?"
+            )) {
+                Bridge.call('pin_manifest_ids', appId, JSON.stringify(manifest_override));
+            }
             if (method === 'steam_native') {
                 Bridge.call('download_game_version_native', appId, JSON.stringify(manifest_override), source);
                 Components.showToast('info', 'Setting up Steam Native download for App ' + appId + '...');
