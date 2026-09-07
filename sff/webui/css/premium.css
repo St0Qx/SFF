@@ -1198,29 +1198,33 @@ select:focus-visible,
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.02);
   position: relative;
+  overflow: hidden;
   transition: all 0.25s ease;
 }
 
+/* Card-wide progress fill: spans the whole background left to right,
+   driven by --dl-progress set from JS. Stays put on hover. */
 .download-item::before {
   content: '';
   position: absolute;
   top: 0;
   left: 0;
-  width: 0;
+  width: var(--dl-progress, 0%);
   height: 100%;
-  background: linear-gradient(90deg, rgba(74, 158, 255, 0.1), transparent);
+  background: linear-gradient(90deg, rgba(74, 158, 255, 0.22), rgba(74, 158, 255, 0.10));
   transition: width 0.3s ease;
   border-radius: 12px 0 0 12px;
   pointer-events: none;
 }
 
+.download-item > * {
+  position: relative;
+  z-index: 1;
+}
+
 .download-item:hover {
   background: rgba(74, 158, 255, 0.06);
   border-color: rgba(74, 158, 255, 0.2);
-}
-
-.download-item:hover::before {
-  width: 100%;
 }
 
 .download-item-name {

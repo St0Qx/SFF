@@ -263,45 +263,6 @@ window.Components = (function() {
         return item;
     }
 
-    // Create a download tracking item. Same box layout as the queue rows:
-    // name + state badge + source, progress bar, pct, status line, actions.
-    function createDownloadItem(download) {
-        var item = document.createElement('div');
-        item.className = 'download-item';
-        item.dataset.id = download.id || '';
-
-        var state = download.active ? 'downloading'
-            : (download.status === 'Completed' ? 'done'
-            : (download.status === 'Cancelled' ? 'failed' : 'failed'));
-        var badgeClass = 'queue-badge-' + state;
-        var stateLabel = download.active ? 'downloading' : (download.status || '').toLowerCase();
-
-        var sourceHtml = download.source
-            ? ' <span style="font-size:11px;opacity:0.65;">via ' + escapeHtml(download.source) + '</span>'
-            : '';
-
-        var actionsHtml = '';
-        if (download.active && download.id && download.id !== 'unknown') {
-            actionsHtml =
-                '<div class="download-actions" style="display:flex;gap:6px;align-items:center;">' +
-                    '<button class="btn btn-sm" data-pause-appid="' + escapeHtml(download.id) + '">Pause</button>' +
-                    '<button class="btn btn-sm" data-cancel-appid="' + escapeHtml(download.id) + '">Cancel</button>' +
-                '</div>';
-        }
-
-        item.innerHTML =
-            '<div class="download-info" style="flex:1;">' +
-                '<div class="download-name"><span class="download-name-text">' + escapeHtml(download.name || 'Unknown') + '</span>' +
-                ' <span class="queue-state-badge ' + badgeClass + '">' + escapeHtml(stateLabel) + '</span>' +
-                sourceHtml + '</div>' +
-                '<div class="progress-bar" style="margin-top:4px;"><div class="progress-fill" style="width:' + (download.progress || 0) + '%"></div></div>' +
-                '<div class="queue-pct" style="font-size:11px;opacity:0.6;">' + Math.round(download.progress || 0) + '%</div>' +
-                '<div class="queue-status" style="font-size:11px;opacity:0.7;"></div>' +
-            '</div>' + actionsHtml;
-
-        return item;
-    }
-
     // Show a toast notification
     function showToast(type, message) {
         var container = document.getElementById('toast-container');
@@ -681,7 +642,6 @@ window.Components = (function() {
         getLibraryCoverUrl: getLibraryCoverUrl,
         createGameCard: createGameCard,
         createGameListItem: createGameListItem,
-        createDownloadItem: createDownloadItem,
         showToast: showToast,
         showModal: showModal,
         hideModal: hideModal,

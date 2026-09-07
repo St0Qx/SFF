@@ -258,7 +258,7 @@ def _bridge_run_local_import(bridge, app_id, lua_path, manifest_folder=''):
             return False
 
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Extracting local Lua...", "progress": 10
+            "app_id": app_id, "status": "Extracting local Lua...", "progress": 0
         }))
 
         lua_install_file = lua_file
@@ -294,25 +294,25 @@ def _bridge_run_local_import(bridge, app_id, lua_path, manifest_folder=''):
             mf_path = _Path(manifest_folder)
             if mf_path.exists() and mf_path.is_dir():
                 bridge.download_progress.emit(json.dumps({
-                    "app_id": app_id, "status": "Staging manifests...", "progress": 20
+                    "app_id": app_id, "status": "Staging manifests...", "progress": 0
                 }))
                 for mf in mf_path.glob("*.manifest"):
                     _shutil.copy2(mf, staging / mf.name)
                     _shutil.copy2(mf, depotcache / mf.name)
 
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Installing Lua to Steam", "progress": 30
+            "app_id": app_id, "status": "Installing Lua to Steam", "progress": 0
         }))
         install_lua_to_steam(steam_path, app_id, lua_install_file)
         _bridge_apply_auto_update_default(bridge, app_id, _auto_update_was_registered)
 
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Writing decryption keys", "progress": 40
+            "app_id": app_id, "status": "Writing decryption keys", "progress": 0
         }))
         ConfigVDFWriter(steam_path).add_decryption_keys_to_config(parsed)
 
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Registering app ID", "progress": 60
+            "app_id": app_id, "status": "Registering app ID", "progress": 0
         }))
         if hasattr(bridge._ui, "app_list_man") and bridge._ui.app_list_man:
             bridge._ui.app_list_man.add_ids(parsed)
@@ -326,7 +326,7 @@ def _bridge_run_local_import(bridge, app_id, lua_path, manifest_folder=''):
                     pass
 
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Writing ACF", "progress": 70
+            "app_id": app_id, "status": "Writing ACF", "progress": 0
         }))
         acf = ACFWriter(dest)
         acf.write_acf(parsed)
@@ -334,7 +334,7 @@ def _bridge_run_local_import(bridge, app_id, lua_path, manifest_folder=''):
             acf.patch_workshop_acf(parsed)
 
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Registering library entry", "progress": 80
+            "app_id": app_id, "status": "Registering library entry", "progress": 0
         }))
         ensure_library_has_app(steam_path, dest, app_id)
 
@@ -365,7 +365,7 @@ def _bridge_run_windows_fastest(bridge, app_id, source='', request_update=False,
 
         # Step 1: download lua
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Downloading Lua", "progress": 10
+            "app_id": app_id, "status": "Downloading Lua", "progress": 0
         }))
         if source == "hubcap":
             selected_source = LuaEndpoint.HUBCAP
@@ -407,7 +407,7 @@ def _bridge_run_windows_fastest(bridge, app_id, source='', request_update=False,
 
         # Step 2: parse lua
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Parsing Lua", "progress": 20
+            "app_id": app_id, "status": "Parsing Lua", "progress": 0
         }))
         lua_contents = lua_path.read_text(encoding="utf-8", errors="replace")
         parsed = parse_lua_contents(lua_contents, lua_path)
@@ -417,7 +417,7 @@ def _bridge_run_windows_fastest(bridge, app_id, source='', request_update=False,
 
         # Step 4: register app ID for injection
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Registering app ID", "progress": 40
+            "app_id": app_id, "status": "Registering app ID", "progress": 0
         }))
         if hasattr(bridge._ui, 'app_list_man') and bridge._ui.app_list_man:
             try:
@@ -427,7 +427,7 @@ def _bridge_run_windows_fastest(bridge, app_id, source='', request_update=False,
 
         # Step 5: write decryption keys
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Writing decryption keys", "progress": 50
+            "app_id": app_id, "status": "Writing decryption keys", "progress": 0
         }))
         config_writer = ConfigVDFWriter(steam_path)
         try:
@@ -437,7 +437,7 @@ def _bridge_run_windows_fastest(bridge, app_id, source='', request_update=False,
 
         # Step 6: backup & install lua to Steam plugin dir
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Installing Lua to Steam", "progress": 60
+            "app_id": app_id, "status": "Installing Lua to Steam", "progress": 0
         }))
         try:
             install_lua_to_steam(steam_path, app_id, lua_path)
@@ -447,7 +447,7 @@ def _bridge_run_windows_fastest(bridge, app_id, source='', request_update=False,
 
         # Step 7: write ACF + patch workshop ACF
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Writing ACF files", "progress": 70
+            "app_id": app_id, "status": "Writing ACF files", "progress": 0
         }))
         acf_writer = ACFWriter(lib_path)
         try:
@@ -462,7 +462,7 @@ def _bridge_run_windows_fastest(bridge, app_id, source='', request_update=False,
 
         # Step 8: register in libraryfolders.vdf
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Registering in library", "progress": 80
+            "app_id": app_id, "status": "Registering in library", "progress": 0
         }))
         try:
             ensure_library_has_app(steam_path, lib_path, app_id)
@@ -476,7 +476,7 @@ def _bridge_run_windows_fastest(bridge, app_id, source='', request_update=False,
 
         # Step 10: track in download manager
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Updating download tracker", "progress": 95
+            "app_id": app_id, "status": "Updating download tracker", "progress": 100
         }))
         if hasattr(bridge._ui, 'download_manager') and bridge._ui.download_manager:
             try:
@@ -531,7 +531,7 @@ def _bridge_run_linux_fastest(bridge, app_id):
             return "source_empty"
 
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Downloading via DepotDownloader", "progress": 30
+            "app_id": app_id, "status": "Downloading via DepotDownloader", "progress": 0
         }))
 
         from pathlib import Path as _Path
@@ -545,7 +545,6 @@ def _bridge_run_linux_fastest(bridge, app_id):
             lib_path=lib_override,
             print_fn=_make_run_download_print_fn(
                 bridge, app_id, _gname, list(manifest_override.keys()),
-                floor=30.0, ceil=95.0,
             ),
         )
 
@@ -557,7 +556,7 @@ def _bridge_run_linux_fastest(bridge, app_id):
             bridge.download_progress.emit(json.dumps({
                 "app_id": app_id,
                 "status": "ACF written, starting native download...",
-                "progress": 50,
+                "progress": 0,
             }))
             return _bridge_run_linux_ddmod_fallback(bridge, app_id, manifest_override, lib_override)
 
@@ -591,7 +590,7 @@ def _bridge_run_linux_ddmod_fallback(bridge, app_id, manifest_override, lib_path
             return False
 
         bridge.download_progress.emit(json.dumps({
-            "app_id": str(app_id), "status": "Downloading via DDMod", "progress": 55
+            "app_id": str(app_id), "status": "Downloading via DDMod", "progress": 0
         }))
 
         game_data = {
@@ -600,9 +599,16 @@ def _bridge_run_linux_ddmod_fallback(bridge, app_id, manifest_override, lib_path
             "depots": {d: {} for d in depots},
             "manifests": manifest_override or {},
         }
+        try:
+            from sff.network.http_utils import get_game_name as _ggn
+            _fname = _ggn(app_id) or f"App {app_id}"
+        except Exception:
+            _fname = f"App {app_id}"
         ok, _size = run_download(
             game_data, depots, lib_path, lib_path,
-            print_fn=lambda msg: logger.debug("DDMod: %s", msg),
+            print_fn=_make_run_download_print_fn(
+                bridge, str(app_id), _fname, depots,
+            ),
         )
         if ok:
             try:
@@ -664,7 +670,7 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
             return (False, "Steam path not configured")
 
         bridge.download_progress.emit(_json.dumps({
-            "app_id": dlc_appid, "status": "Resolving DLC depots", "progress": 10
+            "app_id": dlc_appid, "status": "Resolving DLC depots", "progress": 0
         }))
 
         # Step 1: parent appinfo for depot mapping
@@ -725,7 +731,7 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
         if dlc_depots:
             # Step 2: bundled depot keys
             bridge.download_progress.emit(_json.dumps({
-                "app_id": dlc_appid, "status": "Loading depot keys", "progress": 25
+                "app_id": dlc_appid, "status": "Loading depot keys", "progress": 0
             }))
             try:
                 local_db = _Path(__file__).parent.parent.parent / "lua" / "fallback_depotkeys.json"
@@ -749,7 +755,7 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
         if dlc_depots:
             # Step 3: fetch manifests through the standard cascade
             bridge.download_progress.emit(_json.dumps({
-                "app_id": dlc_appid, "status": "Downloading DLC manifests", "progress": 50
+                "app_id": dlc_appid, "status": "Downloading DLC manifests", "progress": 0
             }))
             downloader = ManifestDownloader(provider, _Path(steam_path))
             try:
@@ -786,7 +792,7 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
             bridge.download_progress.emit(_json.dumps({
                 "app_id": dlc_appid,
                 "status": "DLC is appid-only; updating parent lua",
-                "progress": 70,
+                "progress": 0,
                 "info": True,
             }))
 
@@ -797,7 +803,7 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
 
         # Step 4: merge into existing parent lua, preserving prior keys
         bridge.download_progress.emit(_json.dumps({
-            "app_id": dlc_appid, "status": "Updating parent lua", "progress": 85
+            "app_id": dlc_appid, "status": "Updating parent lua", "progress": 0
         }))
         stplug = _Path(steam_path) / "config" / "stplug-in"
         stplug.mkdir(parents=True, exist_ok=True)
@@ -894,7 +900,7 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
         if dlc_depots and game_installdir and game_library and saved > 0:
             game_dir = _Path(game_library) / "steamapps" / "common" / game_installdir
             bridge.download_progress.emit(_json.dumps({
-                "app_id": dlc_appid, "status": "Downloading DLC files", "progress": 65
+                "app_id": dlc_appid, "status": "Downloading DLC files", "progress": 0
             }))
             for _did, _gid in dlc_depots:
                 _key = keys_dict.get(_did)
@@ -956,7 +962,7 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
 
 # ── Version download ──────────────────────────────────────────────────
 
-def _make_run_download_print_fn(bridge, app_id, game_name, selected_depots, floor=35.0, ceil=95.0):
+def _make_run_download_print_fn(bridge, app_id, game_name, selected_depots, floor=0.0, ceil=100.0):
     """print_fn for run_download that turns the engines' depot markers and
     [PROG] lines into download_progress events, so the Downloads tab shows
     the same "Downloading depot X... A / B (C/s)" rows as a normal download.
@@ -1085,7 +1091,7 @@ def _bridge_download_game_version(bridge, app_id, manifest_override_json, source
 
         bridge.download_progress.emit(json.dumps({
             "app_id": app_id, "name": game_name,
-            "status": "Starting version download", "progress": 10
+            "status": "Starting version download", "progress": 0
         }))
 
         from pathlib import Path as _Path
@@ -1102,7 +1108,6 @@ def _bridge_download_game_version(bridge, app_id, manifest_override_json, source
                 lib_path=lib_override,
                 print_fn=_make_run_download_print_fn(
                     bridge, app_id, game_name, list(manifest_override.keys()),
-                    floor=15.0, ceil=95.0,
                 ),
                 build_id_override=str(build_id or ""),
             )
@@ -1251,7 +1256,7 @@ def _native_install_pinned(bridge, app_id, lua_path, manifest_override, skip_aut
     lib_override = Path(bridge._active_library) if bridge._active_library else steam_path
 
     bridge.download_progress.emit(json.dumps({
-        "app_id": app_id, "status": "Pinning manifests in Lua", "progress": 30
+        "app_id": app_id, "status": "Pinning manifests in Lua", "progress": 0
     }))
     pinned = write_manifest_pins_to_lua(lua_path, manifest_override)
     if not pinned:
@@ -1264,7 +1269,7 @@ def _native_install_pinned(bridge, app_id, lua_path, manifest_override, skip_aut
         return False
 
     bridge.download_progress.emit(json.dumps({
-        "app_id": app_id, "status": "Installing Lua to Steam", "progress": 50
+        "app_id": app_id, "status": "Installing Lua to Steam", "progress": 0
     }))
     _auto_update_was_registered = _bridge_auto_update_was_registered(bridge, app_id)
     install_lua_to_steam(steam_path, app_id, lua_path)
@@ -1287,7 +1292,7 @@ def _native_install_pinned(bridge, app_id, lua_path, manifest_override, skip_aut
     config_writer.add_decryption_keys_to_config(parsed)
 
     bridge.download_progress.emit(json.dumps({
-        "app_id": app_id, "status": "Writing ACF", "progress": 70
+        "app_id": app_id, "status": "Writing ACF", "progress": 0
     }))
     buildid = str(buildid_override) if buildid_override else "0"
     if not buildid_override:
@@ -1332,7 +1337,7 @@ def _bridge_download_game_version_native(bridge, app_id, manifest_override_json,
             return False
 
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Starting Steam Native download", "progress": 5
+            "app_id": app_id, "status": "Starting Steam Native download", "progress": 0
         }))
 
         from sff.lua.choices import download_lua_direct
@@ -1341,7 +1346,7 @@ def _bridge_download_game_version_native(bridge, app_id, manifest_override_json,
         steam_path = bridge._steam_path
 
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Downloading Lua", "progress": 10
+            "app_id": app_id, "status": "Downloading Lua", "progress": 0
         }))
 
         saved_lua_root = Path.cwd() / "saved_lua"
@@ -1417,7 +1422,7 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
             # still be pinned. Same source as a normal download.
             bridge.download_progress.emit(json.dumps({
                 "app_id": app_id, "name": game_name,
-                "status": "Fetching game Lua...", "progress": 5
+                "status": "Fetching game Lua...", "progress": 0
             }))
             from sff.lua.choices import download_lua_direct
             from sff.core.structs import LuaEndpoint as _LE
@@ -1441,7 +1446,7 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
 
         bridge.download_progress.emit(json.dumps({
             "app_id": app_id, "name": game_name,
-            "status": f"Looking up build {build_id}", "progress": 10
+            "status": f"Looking up build {build_id}", "progress": 0
         }))
         build_pins = fetch_build_details(build_id)
         if not build_pins:
@@ -1496,7 +1501,7 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
                 bridge.download_progress.emit(json.dumps({
                     "app_id": app_id,
                     "status": f"Removed {removed} line(s) for depots not in build {build_id}",
-                    "progress": 25,
+                    "progress": 0,
                 }))
                 parsed = parse_lua_contents(
                     lua_path.read_text(encoding="utf-8", errors="replace"), lua_path
@@ -1512,7 +1517,7 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
                     parsed.app_id = app_id
 
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "name": game_name, "status": f"Downloading {len(override)} manifest(s)", "progress": 35
+            "app_id": app_id, "name": game_name, "status": f"Downloading {len(override)} manifest(s)", "progress": 0
         }))
         try:
             downloader = ManifestDownloader(None, Path(steam_path))
@@ -1528,7 +1533,7 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
             return False
 
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "name": game_name, "status": "Pinning manifests in Lua", "progress": 75
+            "app_id": app_id, "name": game_name, "status": "Pinning manifests in Lua", "progress": 0
         }))
         write_manifest_pins_to_lua(lua_path, override)
 
@@ -1572,7 +1577,7 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
         # alone rely on Steam's own updater, which stalls when the appid is
         # not properly queued. Same engine chain as a normal download.
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "name": game_name, "status": "Downloading older build files", "progress": 78
+            "app_id": app_id, "name": game_name, "status": "Downloading older build files", "progress": 0
         }))
         try:
             from sff.downloads.depot_downloader import run_download, filter_depots_by_os, resolve_target_os
@@ -1601,7 +1606,7 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
                 _ok, _size = run_download(
                     _game_data, _selected, lib_dir, Path(steam_path),
                     print_fn=_make_run_download_print_fn(
-                        bridge, app_id, game_name, _selected, floor=78.0, ceil=95.0
+                        bridge, app_id, game_name, _selected
                     ),
                     os_name=_target_os,
                 )
@@ -1635,13 +1640,13 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
                 _flags = 0
             if _flags & 4:
                 bridge.download_progress.emit(json.dumps({
-                    "app_id": app_id, "name": game_name, "status": "Updating Steam properties", "progress": 88
+                    "app_id": app_id, "name": game_name, "status": "Updating Steam properties", "progress": 100
                 }))
                 _steam_was_running = _stop_steam_for_write(steam_path)
                 applied_now = _sync_acf_downgrade(acf_path, str(build_id), override)
                 if _steam_was_running:
                     bridge.download_progress.emit(json.dumps({
-                        "app_id": app_id, "status": "Starting Steam back up", "progress": 95
+                        "app_id": app_id, "status": "Starting Steam back up", "progress": 100
                     }))
                     _start_steam_again(steam_path)
 
@@ -1778,7 +1783,7 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                 lua_dest = _Path(".")
 
             bridge.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Fetching Lua file...", "progress": 5
+                "app_id": app_id, "status": "Fetching Lua file...", "progress": 0
             }))
 
             if source == "local":
@@ -1800,7 +1805,7 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                 return (False, f"Failed to obtain Lua file from source '{source}'")
 
             bridge.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Parsing Lua...", "progress": 15
+                "app_id": app_id, "status": "Parsing Lua...", "progress": 0
             }))
 
             lua_install_file = lua_file
@@ -1829,7 +1834,7 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                 logger.info("DDMod dest %s is not a Steam library; extracting without Steam registration", dest)
 
             bridge.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Stopping Steam to write config...", "progress": 16
+                "app_id": app_id, "status": "Stopping Steam to write config...", "progress": 0
             }))
 
             # Kill Steam before writing config files — Steam locks
@@ -1948,11 +1953,11 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
 
             # Confirm registration before the depot fetch fires.
             bridge.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Registered with Steam", "progress": 22
+                "app_id": app_id, "status": "Registered with Steam", "progress": 0
             }))
 
             bridge.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Resolving manifests...", "progress": 25
+                "app_id": app_id, "status": "Resolving manifests...", "progress": 0
             }))
 
             # Build game_data for run_download
@@ -2146,7 +2151,7 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
             bridge.download_progress.emit(json.dumps({
                 "app_id": app_id, "name": game_name or f"App {app_id}",
                 "status": f"Starting download ({_n_dep} depot{'s' if _n_dep != 1 else ''})... this can take a while",
-                "progress": 35,
+                "progress": 0,
             }))
 
             _last_emit = [0.0]
@@ -2159,19 +2164,17 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
             # DDMod prints lines like "  12.34% Downloaded ..." through
             # the depot loop. Scrape those out and forward as a real
             # progress update to the JS download tracker so the bar
-            # actually moves instead of sticking at 35% the whole
-            # time. DDMod's own throttled output already caps at
+            # actually moves. DDMod's own throttled output already caps at
             # ~5 lines/sec via depot_downloader's reader.
-            # Map DDMod's 0-100 onto the 35-95 slice the UI uses
-            # for "running download" so we don't snap back to 35
-            # mid-flight or pre-empt the 95% "Updating tracker" stage.
-            _DDMOD_FLOOR = 35.0
+            # The percent covers depot downloading only: 0 until the first
+            # depot starts, 100 when the last one finishes.
+            _DDMOD_FLOOR = 0.0
             _DDMOD_CEIL = 100.0
             _last_pct = [-1.0]
             _last_emit = [0.0]  # monotonic of last download_progress emit
             _validating = [False]
 
-            # Each depot gets an equal slice of the 35-100 range so the bar
+            # Each depot gets an equal slice of the 0-100 range so the bar
             # climbs monotonically across all depots instead of hitting 100%
             # at the end of every one and snapping back for the next.
             # Reads selected_depots lazily: the OS filter reassigns it after

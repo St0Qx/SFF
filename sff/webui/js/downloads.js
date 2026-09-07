@@ -1,28 +1,50 @@
 /**
  * SteaMidra — Downloads Page
- * Active downloads with progress bars + download history + download queue.
+ * One entry per app, keyed by app_id. Each entry's status decides which
+ * section renders it:
+ *   downloading                          -> Active Downloads
+ *   queued / paused / failed / done (with a queue item) -> Download Queue
+ *   done / cancelled / failed (no item)  -> Download History
  */
 
 window.Downloads = (function() {
     'use strict';
 
-    var _downloads = {};
+    var _items = {};        // app_id -> entry
     var _initialized = false;
     var _MAX_HISTORY = 100;
     var _queueState = { items: [], paused: false, concurrency: 3 };
-    var _cancelling = {};  // item ids awaiting engine stop
-    var _pendingCancel = null;  // {id, name} while the confirm dialog is open
-    var _pendingActiveCancel = null;  // app_id for non-queue downloads
+    var _pendingCancel = null;  // {appid, qid, name} while the confirm dialog is open
+    var _rowEls = {};           // app_id -> active/queue row element
 
-    function _trimHistory() {
-        var completed = Object.keys(_downloads).filter(function(id) {
-            return !_downloads[id].active;
+    function _get(appid) {
+        var id = String(appid);
+        if (!_items[id]) {
+            _items[id] = {
+                app_id: id, qid: null, name: 'App ' + id, source: '',
+                status: 'queued', progress: 0, statusText: '',
+                error: '', timestamp: Date.now(),
+                pendingPause: false, cancelling: false
+            };
+        }
+        return _items[id];
+    }
+
+    function _findByQid(qid) {
+        var ids = Object.keys(_items);
+        for (var i = 0; i < ids.length; i++) {
+            if (_items[ids[i]].qid === qid) return _items[ids[i]];
+        }
+        return null;
+    }
+
+    function _trim() {
+        var terminal = Object.keys(_items).filter(function(id) {
+            return _items[id].status === 'done' || _items[id].status === 'cancelled';
         }).sort(function(a, b) {
-            return (_downloads[b].timestamp || 0) - (_downloads[a].timestamp || 0);
+            return (_items[b].timestamp || 0) - (_items[a].timestamp || 0);
         });
-        completed.slice(_MAX_HISTORY).forEach(function(id) {
-            delete _downloads[id];
-        });
+        terminal.slice(_MAX_HISTORY).forEach(function(id) { delete _items[id]; });
     }
 
     function init() {
@@ -32,25 +54,44 @@ window.Downloads = (function() {
         Bridge.on('download_progress', function(json) {
             try {
                 var data = JSON.parse(json);
-                _updateDownload(data);
-                _renderQueue();
+                if (!data.app_id) return;
+                var it = _get(data.app_id);
+                if (it.status === 'cancelled' || it.status === 'done') return;
+                if (data.name) it.name = data.name;
+                if (data.status) it.statusText = data.status;
+                if (typeof data.progress === 'number' && data.progress >= 0) {
+                    it.progress = data.progress;
+                }
+                if (it.status === 'queued' || it.status === 'failed') {
+                    it.status = 'downloading';
+                }
+                _render();
             } catch(e) {}
         });
 
         Bridge.on('task_finished', function(json) {
             try {
                 var data = JSON.parse(json);
-                if (data.task && data.task.indexOf('download') !== -1) {
-                    _completeDownload(data);
-                }
+                if (!data.task || data.task.indexOf('download') === -1) return;
+                if (!data.app_id) return;
+                var it = _get(data.app_id);
+                it.pendingPause = false;
+                it.cancelling = false;
+                if (data.paused) it.status = 'paused';
+                else if (data.cancelled) it.status = 'cancelled';
+                else if (data.success) { it.status = 'done'; it.progress = 100; }
+                else it.status = 'failed';
+                it.timestamp = Date.now();
+                _trim();
+                _render();
             } catch(e) {}
         });
 
         Bridge.on('download_queue_state', function(json) {
             try {
                 _queueState = JSON.parse(json) || { items: [], paused: false, concurrency: 3 };
-                _renderQueue();
-                _render();  // active list hides rows the queue now owns
+                _mergeQueue();
+                _render();
             } catch(e) {}
         });
 
@@ -60,305 +101,247 @@ window.Downloads = (function() {
         if (pauseBtn) pauseBtn.addEventListener('click', function() { Bridge.call('download_queue_pause'); });
         if (resumeBtn) resumeBtn.addEventListener('click', function() { Bridge.call('download_queue_resume'); });
         if (clearBtn) clearBtn.addEventListener('click', function() {
-            // "Download History" is rendered from the JS _downloads map, not
-            // the backend queue, so clear both or the history stays put.
-            Object.keys(_downloads).forEach(function(id) {
-                if (!_downloads[id].active) delete _downloads[id];
+            Object.keys(_items).forEach(function(id) {
+                var s = _items[id].status;
+                if (s === 'done' || s === 'cancelled' || (s === 'failed' && !_items[id].qid)) {
+                    delete _items[id];
+                }
             });
             _render();
             Bridge.call('download_queue_clear_finished');
         });
 
-        var queueList = document.getElementById('downloads-queue-list');
-        if (queueList) {
-            queueList.addEventListener('click', function(e) {
-                var btn = e.target.closest('[data-queue-action]');
-                if (!btn) return;
-                var id = btn.dataset.itemId;
-                if (btn.dataset.queueAction === 'retry') {
-                    Bridge.call('download_queue_retry', id);
-                } else if (btn.dataset.queueAction === 'pause') {
-                    btn.disabled = true;
-                    btn.textContent = 'Pausing…';
-                    Bridge.call('download_queue_pause_item', id);
-                } else if (btn.dataset.queueAction === 'resume') {
-                    Bridge.call('download_queue_resume_item', id);
-                } else if (btn.dataset.queueAction === 'cancel') {
-                    var row = btn.closest('.download-item');
-                    var nameEl = row && row.querySelector('.download-name');
-                    _pendingActiveCancel = null;
-                    _pendingCancel = { id: id, name: nameEl ? nameEl.textContent : ('App ' + id) };
-                    var nameTarget = document.getElementById('queue-cancel-game-name');
-                    if (nameTarget) nameTarget.textContent = _pendingCancel.name;
+        var _wireList = function(listEl) {
+            if (!listEl) return;
+            listEl.addEventListener('click', function(e) {
+                var pbtn = e.target.closest('[data-pause-appid]');
+                if (pbtn) {
+                    var it = _get(pbtn.dataset.pauseAppid);
+                    it.pendingPause = true;
+                    _render();
+                    Bridge.call('download_pause_active', it.app_id, it.name, it.source || 'oureveryday');
+                    return;
+                }
+                var cbtn = e.target.closest('[data-cancel-appid]');
+                if (cbtn) {
+                    var it2 = _get(cbtn.dataset.cancelAppid);
+                    _pendingCancel = { appid: it2.app_id, qid: it2.qid, name: it2.name };
+                    var t = document.getElementById('queue-cancel-game-name');
+                    if (t) t.textContent = it2.name;
                     Components.showModal('queue-cancel-modal');
-                } else if (btn.dataset.queueAction === 'remove') {
-                    Bridge.call('download_queue_remove', id);
+                    return;
+                }
+                var qbtn = e.target.closest('[data-queue-action]');
+                if (!qbtn) return;
+                var act = qbtn.dataset.queueAction;
+                var qid = qbtn.dataset.itemId;
+                if (act === 'retry') {
+                    Bridge.call('download_queue_retry', qid);
+                } else if (act === 'resume') {
+                    Bridge.call('download_queue_resume_item', qid);
+                } else if (act === 'remove') {
+                    var it4 = _findByQid(qid);
+                    if (it4) delete _items[it4.app_id];
+                    Bridge.call('download_queue_remove', qid);
+                } else if (act === 'cancel') {
+                    var it3 = _findByQid(qid);
+                    _pendingCancel = { appid: it3 ? it3.app_id : null, qid: qid,
+                                       name: it3 ? it3.name : '' };
+                    var t2 = document.getElementById('queue-cancel-game-name');
+                    if (t2) t2.textContent = _pendingCancel.name;
+                    Components.showModal('queue-cancel-modal');
                 }
             });
-        }
+        };
+        _wireList(document.getElementById('downloads-active-list'));
+        _wireList(document.getElementById('downloads-queue-list'));
 
         var doCancel = function(deleteFiles) {
-            if (_pendingActiveCancel) {
-                var btn = activeBtnFor(_pendingActiveCancel);
-                if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
-                Bridge.call('download_cancel_active', _pendingActiveCancel, deleteFiles);
-                _pendingActiveCancel = null;
-            } else if (_pendingCancel) {
-                _cancelling[_pendingCancel.id] = true;
-                Bridge.call('download_queue_cancel', _pendingCancel.id, deleteFiles);
+            if (_pendingCancel) {
+                if (_pendingCancel.appid) {
+                    var it = _get(_pendingCancel.appid);
+                    it.cancelling = true;
+                    it.pendingPause = false;
+                }
+                if (_pendingCancel.qid) {
+                    Bridge.call('download_queue_cancel', _pendingCancel.qid, deleteFiles);
+                } else if (_pendingCancel.appid) {
+                    Bridge.call('download_cancel_active', _pendingCancel.appid, deleteFiles);
+                }
                 _pendingCancel = null;
-                _renderQueue();
+                _render();
             }
             Components.hideModal('queue-cancel-modal');
-        };
-        var activeBtnFor = function(appid) {
-            var list = document.getElementById('downloads-active-list');
-            return list && list.querySelector('[data-cancel-appid="' + appid + '"]');
         };
         var keepBtn = document.getElementById('queue-cancel-keep');
         var delBtn = document.getElementById('queue-cancel-delete');
         if (keepBtn) keepBtn.addEventListener('click', function() { doCancel(false); });
         if (delBtn) delBtn.addEventListener('click', function() { doCancel(true); });
-
-        var activeList = document.getElementById('downloads-active-list');
-        if (activeList) {
-            activeList.addEventListener('click', function(e) {
-                var pauseBtn = e.target.closest('[data-pause-appid]');
-                if (pauseBtn) {
-                    var appid = pauseBtn.dataset.pauseAppid;
-                    pauseBtn.disabled = true;
-                    pauseBtn.textContent = 'Pausing…';
-                    var prow = pauseBtn.closest('.download-item');
-                    var pname = prow && prow.querySelector('.download-name-text');
-                    Bridge.call('download_pause_active', appid,
-                        pname ? pname.textContent : '', 'oureveryday');
-                    return;
-                }
-                var btn = e.target.closest('[data-cancel-appid]');
-                if (!btn) return;
-                _pendingActiveCancel = btn.dataset.cancelAppid;
-                var row = btn.closest('.download-item');
-                var nameEl = row && row.querySelector('.download-name-text');
-                var nameTarget = document.getElementById('queue-cancel-game-name');
-                if (nameTarget) nameTarget.textContent = nameEl ? nameEl.textContent : ('App ' + _pendingActiveCancel);
-                Components.showModal('queue-cancel-modal');
-            });
-        }
     }
 
     function onPageEnter() {
         init();
-        _render();
         Bridge.callSync('download_queue_get_state', function(json) {
             try {
                 _queueState = JSON.parse(json) || { items: [], paused: false, concurrency: 3 };
-                _renderQueue();
+                _mergeQueue();
             } catch(e) {}
-        });
-    }
-
-    function _updateDownload(data) {
-        var id = data.id || data.app_id || 'unknown';
-        var prev = _downloads[id];
-        _downloads[id] = {
-            id: id,
-            name: data.name || (prev && prev.name) || ('App ' + id),
-            status: data.status || 'Downloading',
-            progress: data.progress || 0,
-            active: true,
-            timestamp: Date.now()
-        };
-        _render();
-    }
-
-    function _completeDownload(data) {
-        // app_id first: task_finished carries task='download_ddmod', which
-        // would otherwise create a second row and leave the real one active.
-        var id = data.app_id || data.task || 'unknown';
-        if (data.paused) {
-            // Keep the entry so the queue row can read its last progress;
-            // mark it paused so _render skips it in both Active and History.
-            if (_downloads[id]) {
-                _downloads[id].active = false;
-                _downloads[id].paused = true;
-            }
             _render();
-            return;
-        }
-        var label = data.cancelled ? 'Cancelled' : (data.success ? 'Completed' : 'Failed');
-        if (_downloads[id]) {
-            _downloads[id].active = false;
-            _downloads[id].status = label;
-            _downloads[id].progress = data.success ? 100 : _downloads[id].progress;
-        } else {
-            _downloads[id] = {
-                id: id,
-                name: data.message || id,
-                status: label,
-                progress: data.success ? 100 : 0,
-                active: false,
-                timestamp: Date.now()
-            };
-        }
-        _trimHistory();
-        _render();
+        });
     }
 
-    var _rowEls = {};       // id -> active row element, patched in place
-    var _queueRowEls = {};  // queue item id -> row element
-
-    function _render() {
-        var activeList = document.getElementById('downloads-active-list');
-        var activeEmpty = document.getElementById('downloads-active-empty');
-        var historyList = document.getElementById('downloads-history-list');
-
-        var activeItems = [];
-        var historyItems = [];
-
-        Object.keys(_downloads).forEach(function(id) {
-            var dl = _downloads[id];
-            if (dl.paused) return;  // shown in the queue section
-            if (dl.active) {
-                activeItems.push(dl);
-            } else {
-                historyItems.push(dl);
+    function _mergeQueue() {
+        var seen = {};
+        ((_queueState && _queueState.items) || []).forEach(function(item) {
+            var id = String(item.app_id);
+            seen[id] = true;
+            var it = _get(id);
+            it.qid = item.id;
+            if (item.name) it.name = item.name;
+            if (item.source) it.source = item.source;
+            if (item.error) it.error = item.error;
+            // Engine still winding down after a pause/cancel request: the
+            // row stays in Active until task_finished reports back.
+            if (it.status === 'downloading') return;
+            if (item.state === 'downloading') it.status = item.paused ? 'paused' : 'downloading';
+            else if (item.state === 'queued') it.status = item.paused ? 'paused' : 'queued';
+            else if (item.state === 'failed') it.status = 'failed';
+            else if (item.state === 'done') it.status = 'done';
+        });
+        Object.keys(_items).forEach(function(id) {
+            var it = _items[id];
+            if (it.qid && !seen[id]) {
+                it.qid = null;
+                if (it.status === 'queued' || it.status === 'paused') it.status = 'cancelled';
             }
         });
-
-        if (activeList) {
-            var seen = {};
-            activeItems.forEach(function(dl) {
-                seen[dl.id] = true;
-                var el = _rowEls[dl.id];
-                if (!el || el.parentNode !== activeList) {
-                    el = Components.createDownloadItem(dl);
-                    _rowEls[dl.id] = el;
-                    activeList.appendChild(el);
-                } else {
-                    _patchActiveRow(el, dl);
-                }
-            });
-            Array.prototype.slice.call(activeList.children).forEach(function(el) {
-                if (!seen[el.dataset.id]) {
-                    delete _rowEls[el.dataset.id];
-                    el.remove();
-                }
-            });
-        }
-        if (activeEmpty) {
-            activeEmpty.classList.toggle('hidden', activeItems.length > 0);
-        }
-
-        if (historyList) {
-            historyList.innerHTML = '';
-            historyItems.sort(function(a, b) { return (b.timestamp || 0) - (a.timestamp || 0); });
-            historyItems.forEach(function(dl) {
-                historyList.appendChild(Components.createDownloadItem(dl));
-            });
-        }
     }
 
-    function _patchActiveRow(el, dl) {
-        var nameEl = el.querySelector('.download-name-text');
-        if (nameEl && dl.name && nameEl.textContent !== dl.name) nameEl.textContent = dl.name;
-        var fill = el.querySelector('.progress-fill');
-        if (fill) fill.style.width = Math.min(100, dl.progress || 0) + '%';
-        var pct = el.querySelector('.queue-pct');
-        if (pct) pct.textContent = Math.round(dl.progress || 0) + '%';
-        var stat = el.querySelector('.queue-status');
-        if (stat) {
-            var t = dl.status || 'Pending';
-            if (stat.textContent !== t) stat.textContent = t;
-        }
+    function _badge(it) {
+        if (it.cancelling) return ['cancelling', 'queue-badge-failed'];
+        if (it.pendingPause) return ['pausing', 'queue-badge-paused'];
+        var cls = it.status === 'cancelled' ? 'failed' : it.status;
+        return [it.status, 'queue-badge-' + cls];
     }
 
-    function _buildQueueRow(item) {
-        var stateLabel = item.paused ? 'paused' : item.state;
-        var badgeClass = 'queue-badge-' + (item.paused && item.state === 'queued' ? 'paused' : item.state);
-        var actions = '';
-        if (item.state === 'failed') {
-            actions += '<button class="btn btn-sm" data-queue-action="retry" data-item-id="' + Components.escapeHtml(item.id) + '">Retry</button>';
+    function _actionsHtml(it) {
+        var esc = Components.escapeHtml;
+        if (it.status === 'downloading') {
+            if (it.cancelling) return '<button class="btn btn-sm" disabled>Cancelling…</button>';
+            if (it.pendingPause) return '<button class="btn btn-sm" disabled>Pausing…</button>';
+            return '<button class="btn btn-sm" data-pause-appid="' + esc(it.app_id) + '">Pause</button>' +
+                   '<button class="btn btn-sm" data-cancel-appid="' + esc(it.app_id) + '">Cancel</button>';
         }
-        if (item.state === 'downloading') {
-            if (_cancelling[item.id]) {
-                actions += '<button class="btn btn-sm" disabled>Cancelling…</button>';
-            } else {
-                actions += '<button class="btn btn-sm" data-queue-action="pause" data-item-id="' + Components.escapeHtml(item.id) + '">Pause</button>';
-                actions += '<button class="btn btn-sm" data-queue-action="cancel" data-item-id="' + Components.escapeHtml(item.id) + '">Cancel</button>';
-            }
-        } else if (item.paused) {
-            actions += '<button class="btn btn-sm" data-queue-action="resume" data-item-id="' + Components.escapeHtml(item.id) + '">Resume</button>';
-            actions += '<button class="btn btn-sm" data-queue-action="cancel" data-item-id="' + Components.escapeHtml(item.id) + '">Cancel</button>';
-        } else {
-            actions += '<button class="btn btn-sm" data-queue-action="remove" data-item-id="' + Components.escapeHtml(item.id) + '">Remove</button>';
+        if (it.status === 'paused') {
+            return '<button class="btn btn-sm" data-queue-action="resume" data-item-id="' + esc(it.qid) + '">Resume</button>' +
+                   '<button class="btn btn-sm" data-queue-action="cancel" data-item-id="' + esc(it.qid) + '">Cancel</button>';
         }
-        if (item.error) {
-            actions += '<span style="font-size:11px;opacity:0.7;margin-left:6px;" title="' + Components.escapeHtml(item.error) + '">(error)</span>';
+        if (it.status === 'queued') {
+            return '<button class="btn btn-sm" data-queue-action="remove" data-item-id="' + esc(it.qid) + '">Remove</button>';
         }
+        if (it.status === 'failed') {
+            return it.qid
+                ? '<button class="btn btn-sm" data-queue-action="retry" data-item-id="' + esc(it.qid) + '">Retry</button>'
+                : '';
+        }
+        if (it.status === 'done') {
+            return it.qid
+                ? '<button class="btn btn-sm" data-queue-action="remove" data-item-id="' + esc(it.qid) + '">Remove</button>'
+                : '';
+        }
+        return '';
+    }
+
+    function _sig(it) {
+        return it.status + '|' + (it.pendingPause ? 1 : 0) + '|' + (it.cancelling ? 1 : 0) +
+               '|' + (it.error || '') + '|' + (it.name || '') + '|' + (it.source || '');
+    }
+
+    function _buildRow(it) {
         var row = document.createElement('div');
         row.className = 'download-item';
-        row.dataset.itemid = item.id;
+        row.dataset.appid = it.app_id;
+        row.dataset.sig = _sig(it);
+        var b = _badge(it);
+        var sourceHtml = it.source
+            ? ' <span style="font-size:11px;opacity:0.65;">via ' + Components.escapeHtml(it.source) + '</span>'
+            : '';
+        var errHtml = it.error
+            ? ' <span style="font-size:11px;opacity:0.7;" title="' + Components.escapeHtml(it.error) + '">(error)</span>'
+            : '';
         row.innerHTML =
             '<div class="download-info" style="flex:1;">' +
-                '<div class="download-name">' + Components.escapeHtml(item.name || ('App ' + item.app_id)) +
-                ' <span class="queue-state-badge ' + badgeClass + '">' + Components.escapeHtml(stateLabel) + '</span>' +
-                ' <span style="font-size:11px;opacity:0.65;">via ' + Components.escapeHtml(item.source) + '</span></div>' +
-                '<div class="progress-bar" style="margin-top:4px;"><div class="progress-fill" style="width:0%"></div></div>' +
-                '<div class="queue-pct" style="font-size:11px;opacity:0.6;">0%</div>' +
+                '<div class="download-name"><span class="download-name-text">' + Components.escapeHtml(it.name) + '</span>' +
+                ' <span class="queue-state-badge ' + b[1] + '">' + b[0] + '</span>' + sourceHtml + errHtml + '</div>' +
+                '<div class="queue-pct" style="font-size:11px;opacity:0.6;">' + Math.round(it.progress || 0) + '%</div>' +
                 '<div class="queue-status" style="font-size:11px;opacity:0.7;"></div>' +
             '</div>' +
-            '<div class="download-actions" style="display:flex;gap:6px;align-items:center;">' + actions + '</div>';
+            '<div class="download-actions" style="display:flex;gap:6px;align-items:center;">' + _actionsHtml(it) + '</div>';
+        _patchRow(row, it);
         return row;
     }
 
-    function _renderQueue() {
-        var listEl = document.getElementById('downloads-queue-list');
-        var emptyEl = document.getElementById('downloads-queue-empty');
+    function _patchRow(el, it) {
+        el.style.setProperty('--dl-progress', Math.max(0, Math.min(100, it.progress || 0)) + '%');
+        var pct = el.querySelector('.queue-pct');
+        if (pct) pct.textContent = Math.round(it.progress || 0) + '%';
+        var stat = el.querySelector('.queue-status');
+        if (stat && stat.textContent !== (it.statusText || '')) stat.textContent = it.statusText || '';
+    }
+
+    function _syncList(list, entries) {
+        if (!list) return;
+        var seen = {};
+        entries.forEach(function(it) {
+            seen[it.app_id] = true;
+            var el = _rowEls[it.app_id];
+            if (!el || el.parentNode !== list || el.dataset.sig !== _sig(it)) {
+                var fresh = _buildRow(it);
+                if (el && el.parentNode === list) list.replaceChild(fresh, el);
+                else list.appendChild(fresh);
+                _rowEls[it.app_id] = fresh;
+            } else {
+                _patchRow(el, it);
+            }
+        });
+        Array.prototype.slice.call(list.children).forEach(function(el) {
+            if (!seen[el.dataset.appid]) {
+                // Only drop the registration if this element IS the tracked
+                // one; a row that moved to the other list re-registered.
+                if (_rowEls[el.dataset.appid] === el) delete _rowEls[el.dataset.appid];
+                el.remove();
+            }
+        });
+    }
+
+    function _render() {
+        var active = [], queue = [], history = [];
+        Object.keys(_items).forEach(function(id) {
+            var it = _items[id];
+            if (it.status === 'downloading') { active.push(it); return; }
+            if (it.qid && (it.status === 'paused' || it.status === 'queued' ||
+                           it.status === 'failed' || it.status === 'done')) queue.push(it);
+            if (it.status === 'done' || it.status === 'cancelled' ||
+                (it.status === 'failed' && !it.qid)) history.push(it);
+        });
+
+        _syncList(document.getElementById('downloads-active-list'), active);
+        var activeEmpty = document.getElementById('downloads-active-empty');
+        if (activeEmpty) activeEmpty.classList.toggle('hidden', active.length > 0);
+
+        _syncList(document.getElementById('downloads-queue-list'), queue);
+        var queueEmpty = document.getElementById('downloads-queue-empty');
+        if (queueEmpty) queueEmpty.classList.toggle('hidden', queue.length > 0);
+
+        var historyList = document.getElementById('downloads-history-list');
+        if (historyList) {
+            historyList.innerHTML = '';
+            history.sort(function(a, b) { return (b.timestamp || 0) - (a.timestamp || 0); });
+            history.forEach(function(it) { historyList.appendChild(_buildRow(it)); });
+        }
+
         var pauseBtn = document.getElementById('queue-pause');
         var resumeBtn = document.getElementById('queue-resume');
-        var items = (_queueState && _queueState.items) || [];
-        var liveIds = {};
-        var seenIds = {};
-        items.forEach(function(item) { liveIds[item.id] = true; });
-        Object.keys(_cancelling).forEach(function(id) {
-            if (!liveIds[id]) delete _cancelling[id];
-        });
-        if (listEl) {
-            items.forEach(function(item) {
-                // Downloading items live in Active Downloads; the queue
-                // section only shows waiting / paused / finished rows.
-                if (item.state === 'downloading' && !item.paused) return;
-                seenIds[item.id] = true;
-                var dl = _downloads[String(item.app_id)];
-                var progress = dl && typeof dl.progress === 'number' ? dl.progress : 0;
-                var row = _queueRowEls[item.id];
-                var sig = item.state + '|' + item.source + '|' + (item.name || '') + '|' + (item.error || '') + '|' + !!_cancelling[item.id] + '|' + !!item.paused;
-                if (!row || row.parentNode !== listEl || row.dataset.sig !== sig) {
-                    var fresh = _buildQueueRow(item);
-                    fresh.dataset.sig = sig;
-                    _queueRowEls[item.id] = fresh;
-                    if (row && row.parentNode === listEl) listEl.replaceChild(fresh, row);
-                    else listEl.appendChild(fresh);
-                    row = fresh;
-                }
-                var fill = row.querySelector('.progress-fill');
-                if (fill) fill.style.width = Math.min(100, progress) + '%';
-                var pct = row.querySelector('.queue-pct');
-                if (pct) pct.textContent = Math.round(progress) + '%';
-                var stat = row.querySelector('.queue-status');
-                if (stat) {
-                    var txt = (item.state === 'downloading' && dl && dl.status) ? dl.status : '';
-                    if (stat.textContent !== txt) stat.textContent = txt;
-                }
-            });
-            Array.prototype.slice.call(listEl.children).forEach(function(el) {
-                if (!seenIds[el.dataset.itemid]) {
-                    delete _queueRowEls[el.dataset.itemid];
-                    el.remove();
-                }
-            });
-        }
-        if (emptyEl) emptyEl.classList.toggle('hidden', Object.keys(seenIds).length > 0);
         if (pauseBtn) pauseBtn.disabled = !!(_queueState && _queueState.paused);
         if (resumeBtn) resumeBtn.disabled = !(_queueState && _queueState.paused);
     }
