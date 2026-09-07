@@ -216,6 +216,10 @@ window.App = (function() {
                     if (result.paused) {
                         return;
                     }
+                    if (result.cancelled) {
+                        Components.showToast('info', 'Download cancelled.');
+                        return;
+                    }
                     // The selected source has no lua for this game: offer a
                     // source switch instead of a dead error toast.
                     if (result.source_empty) {
@@ -1567,7 +1571,7 @@ window.App = (function() {
             return;
         }
         Bridge.call('set_active_library', dest);
-        Components.showToast('info', 'Starting DDMod download for App ' + appId + '...');
+        Components.showToast('info', 'Starting native download for App ' + appId + '...');
         Bridge.call('download_game_ddmod', appId, source, luaPath || '', manifestFolder || '', targetOs || '');
     }
 

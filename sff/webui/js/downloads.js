@@ -50,6 +50,7 @@ window.Downloads = (function() {
             try {
                 _queueState = JSON.parse(json) || { items: [], paused: false, concurrency: 3 };
                 _renderQueue();
+                _render();  // active list hides rows the queue now owns
             } catch(e) {}
         });
 
@@ -180,15 +181,16 @@ window.Downloads = (function() {
             _render();
             return;
         }
+        var label = data.cancelled ? 'Cancelled' : (data.success ? 'Completed' : 'Failed');
         if (_downloads[id]) {
             _downloads[id].active = false;
-            _downloads[id].status = data.success ? 'Completed' : 'Failed';
+            _downloads[id].status = label;
             _downloads[id].progress = data.success ? 100 : _downloads[id].progress;
         } else {
             _downloads[id] = {
                 id: id,
                 name: data.message || id,
-                status: data.success ? 'Completed' : 'Failed',
+                status: label,
                 progress: data.success ? 100 : 0,
                 active: false,
                 timestamp: Date.now()
@@ -208,11 +210,17 @@ window.Downloads = (function() {
 
         var activeItems = [];
         var historyItems = [];
+        // Queue-managed downloads already render in the queue section with
+        // their own progress bar; showing them in Active too doubles rows.
+        var queueDownloading = {};
+        ((_queueState && _queueState.items) || []).forEach(function(it) {
+            if (it.state === 'downloading') queueDownloading[String(it.app_id)] = true;
+        });
 
         Object.keys(_downloads).forEach(function(id) {
             var dl = _downloads[id];
             if (dl.active) {
-                activeItems.push(dl);
+                if (!queueDownloading[String(id)]) activeItems.push(dl);
             } else {
                 historyItems.push(dl);
             }
@@ -297,6 +305,7 @@ window.Downloads = (function() {
                 ' <span style="font-size:11px;opacity:0.65;">via ' + Components.escapeHtml(item.source) + '</span></div>' +
                 '<div class="progress-bar" style="margin-top:4px;"><div class="progress-fill" style="width:0%"></div></div>' +
                 '<div class="queue-pct" style="font-size:11px;opacity:0.6;">0%</div>' +
+                '<div class="queue-status" style="font-size:11px;opacity:0.7;"></div>' +
             '</div>' +
             '<div class="download-actions" style="display:flex;gap:6px;align-items:center;">' + actions + '</div>';
         return row;
@@ -333,6 +342,11 @@ window.Downloads = (function() {
                 if (fill) fill.style.width = Math.min(100, progress) + '%';
                 var pct = row.querySelector('.queue-pct');
                 if (pct) pct.textContent = Math.round(progress) + '%';
+                var stat = row.querySelector('.queue-status');
+                if (stat) {
+                    var txt = (item.state === 'downloading' && dl && dl.status) ? dl.status : '';
+                    if (stat.textContent !== txt) stat.textContent = txt;
+                }
             });
             Array.prototype.slice.call(listEl.children).forEach(function(el) {
                 if (!seenIds[el.dataset.itemid]) {

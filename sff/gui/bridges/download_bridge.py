@@ -211,6 +211,13 @@ def _bridge_download_game_with_source(bridge, app_id, source, request_update='0'
                 app_id=app_id, source_empty=True,
             )
             return
+        from sff.game import download_queue as _dq
+        if _dq.is_cancelled(str(app_id)):
+            bridge._emit_task_result(
+                "download_fastest", False, "Download cancelled.",
+                app_id=app_id, cancelled=True,
+            )
+            return
         success = result is True
         bridge._emit_task_result(
             "download_fastest",
@@ -529,11 +536,17 @@ def _bridge_run_linux_fastest(bridge, app_id):
 
         from pathlib import Path as _Path
         lib_override = _Path(bridge._active_library) if bridge._active_library else bridge._steam_path
+        from sff.network.http_utils import get_game_name
+        _gname = get_game_name(app_id) or f"App {app_id}"
         result = bridge._ui.process_from_store(
             app_id=app_id,
             manifest_override=manifest_override,
             use_hubcap=bool(bridge._api_key),
             lib_path=lib_override,
+            print_fn=_make_run_download_print_fn(
+                bridge, app_id, _gname, list(manifest_override.keys()),
+                floor=30.0, ceil=95.0,
+            ),
         )
 
         # process_from_store on Linux + sls_man writes ACF and the library
@@ -543,13 +556,16 @@ def _bridge_run_linux_fastest(bridge, app_id):
         if result is MainReturnCode.LOOP_NO_PROMPT:
             bridge.download_progress.emit(json.dumps({
                 "app_id": app_id,
-                "status": "ACF written, starting DDMod download...",
+                "status": "ACF written, starting native download...",
                 "progress": 50,
             }))
             return _bridge_run_linux_ddmod_fallback(bridge, app_id, manifest_override, lib_override)
 
+        from sff.game import download_queue as _dq
+        if _dq.is_cancelled(str(app_id)):
+            return False
         bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Complete", "progress": 100
+            "app_id": app_id, "name": _gname, "status": "Complete", "progress": 100
         }))
         return True
 
@@ -2483,6 +2499,14 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                 app_id=app_id, source_empty=True,
             )
             return
+        if not ok:
+            from sff.game import download_queue as _dq
+            if _dq.is_cancelled(str(app_id)):
+                bridge._emit_task_result(
+                    "download_ddmod", False, "Download cancelled.",
+                    app_id=app_id, cancelled=True,
+                )
+                return
         if ok and source in ("hubcap", "ryuu"):
             QTimer.singleShot(1000, bridge._maybe_auto_contribute_provider)
         game_data = getattr(bridge, '_current_game_data', None)
