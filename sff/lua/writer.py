@@ -144,7 +144,7 @@ class ACFWriter:
                     + ("..." if len(manifest_map) > 3 else "")
                 )
             acf_contents = {"AppState": app_state}
-            vdf_dump(acf_file, acf_contents)
+            vdf_dump(acf_file, acf_contents, tabbed=True)
             try:
                 if sys.platform != "win32":
                     os.chmod(acf_file, 0o444)
@@ -183,7 +183,7 @@ class ACFWriter:
         acf_file.parent.mkdir(parents=True, exist_ok=True)
         app_state: dict = {
             "appid": app_id_str,
-            "universe": "1",
+            "Universe": "1",
             "name": app_name,
             "StateFlags": "4",
             "installdir": installdir,
@@ -192,8 +192,8 @@ class ACFWriter:
             "StagingSize": "0",
             "buildid": str(buildid),
             "UpdateResult": "0",
-            "BytesToDownload": str(size_on_disk),
-            "BytesDownloaded": str(size_on_disk),
+            "BytesToDownload": "0",
+            "BytesDownloaded": "0",
             "BytesToStage": "0",
             "BytesStaged": "0",
             "TargetBuildID": str(buildid),
@@ -201,6 +201,9 @@ class ACFWriter:
             "AllowOtherDownloadsWhileRunning": "0",
             "ScheduledAutoUpdate": "0",
             "DownloadType": "1",
+            "InstalledDepots": {},
+            "UserConfig": {"language": "english"},
+            "MountedConfig": {"language": "english"},
         }
         if manifest_map:
             if empty_depots:
@@ -220,7 +223,7 @@ class ACFWriter:
                 + ("..." if len(manifest_map) > 3 else "")
             )
         acf_contents = {"AppState": app_state}
-        vdf_dump(acf_file, acf_contents)
+        vdf_dump(acf_file, acf_contents, tabbed=True)
         try:
             os.chmod(acf_file, 0o444)
         except OSError:
@@ -256,7 +259,7 @@ class ACFWriter:
             except (ValueError, TypeError):
                 pass
             if patched:
-                vdf_dump(acf_file, data)
+                vdf_dump(acf_file, data, tabbed=True)
                 try:
                     if sys.platform != "win32":
                         os.chmod(acf_file, 0o444)
@@ -296,7 +299,7 @@ class ACFWriter:
             # them just causes repeated "Access Denied" failures.
             if "WorkshopItemDetails" in ws:
                 ws["WorkshopItemDetails"] = {}
-            vdf_dump(ws_acf, data)
+            vdf_dump(ws_acf, data, tabbed=True)
             try:
                 if sys.platform != "win32":
                     os.chmod(ws_acf, 0o444)
@@ -339,7 +342,7 @@ class ACFWriter:
                 if app_state.get(key, clean_val) != clean_val:
                     app_state[key] = clean_val
             data["AppState"] = app_state
-            vdf_dump(acf_file, data)
+            vdf_dump(acf_file, data, tabbed=True)
             try:
                 if sys.platform != "win32":
                     os.chmod(acf_file, 0o444)

@@ -42,6 +42,7 @@ DEFAULT_FAKE_APPID = "480"  # Spacewar
 
 _RE_ADDITIONAL_APPS = re.compile(r"^AdditionalApps:\s*(?:#.*)?$", re.MULTILINE)
 _RE_APP_TOKENS = re.compile(r"^AppTokens:\s*(?:#.*)?$", re.MULTILINE)
+_RE_MANIFEST_IDS = re.compile(r"^ManifestIds:\s*(?:#.*)?$", re.MULTILINE)
 _RE_DLC_DATA = re.compile(r"^DlcData:\s*(?:#.*)?$", re.MULTILINE)
 _RE_FAKE_APP_IDS = re.compile(r"^FakeAppIds:\s*(?:#.*)?$", re.MULTILINE)
 _RE_NEXT_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]*:\s*$", re.MULTILINE)
@@ -193,9 +194,52 @@ def _get_app_tokens_section(content: str) -> str:
     return content[start:end]
 
 
+def _get_manifest_ids_section(content: str) -> str:
+    pattern = _RE_MANIFEST_IDS
+    start = _get_section_start(content, pattern)
+    if start is None:
+        return ""
+    next_key = _RE_NEXT_KEY
+    end = _get_section_end(content, start, next_key)
+    return content[start:end]
+
+
 def _fix_app_tokens_indentation(content: str) -> Tuple[str, bool]:
     """Fix indentation of AppTokens entries to 2-space."""
     pattern = _RE_APP_TOKENS
+    start = _get_section_start(content, pattern)
+    if start is None:
+        return content, False
+
+    after = content[start:]
+    next_key = _RE_NEXT_KEY
+
+    last_token = _RE_LAST_TOKEN
+    matches = list(last_token.finditer(after))
+    if matches:
+        last_end = matches[-1].end()
+        nl = after.find("\n", last_end)
+        if nl != -1:
+            section_end = start + nl + 1
+        else:
+            nm = next_key.search(after)
+            section_end = start + nm.start() if nm else len(content)
+    else:
+        nm = next_key.search(after)
+        section_end = start + nm.start() if nm else len(content)
+
+    section = content[start:section_end]
+    token_re = _RE_TOKEN
+    fixed = token_re.sub(r"\1  \3\4", section)
+
+    if fixed != section:
+        return content[:start] + fixed + content[section_end:], True
+    return content, False
+
+
+def _fix_manifest_ids_indentation(content: str) -> Tuple[str, bool]:
+    """Fix indentation of ManifestIds entries to 2-space."""
+    pattern = _RE_MANIFEST_IDS
     start = _get_section_start(content, pattern)
     if start is None:
         return content, False
@@ -444,6 +488,15 @@ def add_additional_app(config_path: Path, app_id: str, comment: str = "") -> boo
         return False
 
 
+def is_additional_app(config_path: Path, app_id: str) -> bool:
+    """True if app_id is listed under AdditionalApps (unowned/shared games)."""
+    content = _read_config(config_path)
+    if content is None:
+        return False
+    pat = re.compile(rf"^\s*-\s*{re.escape(app_id)}\s*(?:#.*)?$", re.MULTILINE)
+    return bool(pat.search(content))
+
+
 def remove_additional_app(config_path: Path, app_id: str) -> bool:
     """Remove an AppID from AdditionalApps."""
     pat = re.compile(rf"^\s*-\s*{re.escape(app_id)}\s*(?:#.*)?$", re.MULTILINE)
@@ -526,6 +579,94 @@ def get_app_tokens(config_path: Path) -> Dict[str, str]:
     except OSError as e:
         logger.error(f"Failed to read AppTokens from {config_path}: {e}", exc_info=True)
     return tokens
+
+
+# ---------------------------------------------------------------------------
+# ManifestIds
+# ---------------------------------------------------------------------------
+
+def add_manifest_id(config_path: Path, depot_id: str, manifest_id: str) -> bool:
+    """Add or update a depot's pinned manifest in the ManifestIds section."""
+    try:
+        content = _read_config(config_path)
+        if content is None:
+            return False
+
+        header = _RE_MANIFEST_IDS
+        if not header.search(content):
+            new_entry = (
+                "\n#Override Depot manifest IDs\n"
+                "#Use this to download older game versions or to lock a game to a specific version\n"
+                f"ManifestIds:\n  {depot_id}: {manifest_id}\n"
+            )
+            _create_backup(config_path)
+            return _atomic_write(config_path, content + new_entry)
+
+        fixed, _ = _fix_manifest_ids_indentation(content)
+        content = fixed
+
+        section = _get_manifest_ids_section(content)
+        existing = re.compile(rf"^ {{2}}{re.escape(depot_id)}\s*:\s*(.+)$", re.MULTILINE)
+        existing_match = existing.search(section)
+
+        if existing_match:
+            if existing_match.group(1).strip() == str(manifest_id):
+                return False
+            ids_start = content.find("ManifestIds:")
+            line_start = ids_start + len("ManifestIds:\n") + existing_match.start()
+            line_end = line_start + len(existing_match.group(0))
+            new_line = f"  {depot_id}: {manifest_id}"
+            new_content = content[:line_start] + new_line + content[line_end:]
+            _create_backup(config_path)
+            if _atomic_write(config_path, new_content):
+                logger.info(f"Updated ManifestId for depot '{depot_id}'")
+                return True
+            return False
+
+        new_id_line = f"  {depot_id}: {manifest_id}"
+        id_line_pat = re.compile(r"(^ManifestIds:\n)( {2}\S+:[^\n]*)", re.MULTILINE)
+        id_match = id_line_pat.search(content)
+        if id_match:
+            new_content = (
+                content[: id_match.end()] + "\n" + new_id_line + content[id_match.end():]
+            )
+        else:
+            new_content = content.replace("ManifestIds:", "ManifestIds:\n" + new_id_line, 1)
+
+        _create_backup(config_path)
+        if _atomic_write(config_path, new_content):
+            logger.info(f"Added ManifestId for depot '{depot_id}'")
+            return True
+        return False
+    except OSError as e:
+        logger.error(f"Failed to add ManifestId for depot '{depot_id}': {e}", exc_info=True)
+        return False
+
+
+def remove_manifest_id(config_path: Path, depot_id: str) -> bool:
+    """Remove a depot's pinned manifest from the ManifestIds section."""
+    pat = re.compile(rf"^ {{2}}{re.escape(depot_id)}\s*:\s*[^\n]*$", re.MULTILINE)
+    return _remove_matching_entry(
+        config_path, pat,
+        f"Removed ManifestId for depot '{depot_id}'",
+        f"Failed to remove ManifestId for depot '{depot_id}': {{e}}",
+    )
+
+
+def get_manifest_ids(config_path: Path) -> Dict[str, str]:
+    """Read all pinned depot/manifest pairs from config.yaml."""
+    ids: Dict[str, str] = {}
+    try:
+        if not config_path.exists():
+            return ids
+        with open(config_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        section = _get_manifest_ids_section(content)
+        for m in re.finditer(r"^\s*(\d+)\s*:\s*(\d+)\s*$", section, re.MULTILINE):
+            ids[m.group(1).strip()] = m.group(2).strip()
+    except OSError as e:
+        logger.error(f"Failed to read ManifestIds from {config_path}: {e}", exc_info=True)
+    return ids
 
 
 # ---------------------------------------------------------------------------

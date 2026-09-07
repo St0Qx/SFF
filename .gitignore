@@ -31,6 +31,9 @@ SteamAutoCrack/SteamAutoCrack/
 typings/
 typings/steam/
 
+# Local-only, not part of the fork
+.claude/
+
 # Virtual environments & user-specific data
 .venv/
 venv/
@@ -38,6 +41,12 @@ GreenLuma/
 dlc_unlocker_cache/
 backups/
 saved_lua/
+manifests/
+all_games.txt
+flat_file_repair_last_check
+sff/lua/contributor_state.json
+sff/lua/fallback_depotkeys.json
+store_metadata/topselling.json
 
 # Test / temp folders
 tmp/

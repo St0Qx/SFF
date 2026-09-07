@@ -96,6 +96,12 @@ window.App = (function() {
                     document.querySelectorAll('.platform-win').forEach(function(el) {
                         el.style.display = 'none';
                     });
+                    // Steam (Native) is a no-op on Linux
+                    var steamNativeOlder = document.getElementById('older-method-steam');
+                    if (steamNativeOlder) {
+                        steamNativeOlder.disabled = true;
+                        steamNativeOlder.classList.add('is-disabled');
+                    }
                 }
                 if (_currentPage === 'home') _refreshHomeLumacoreNotice();
 
@@ -831,6 +837,7 @@ window.App = (function() {
                     if (path) {
                         var inp = document.getElementById('dl-ddmod-dest-path');
                         if (inp) inp.value = path;
+                        _checkDdmodDestOutsideLibraries(path, 'dl-ddmod-dest-warning');
                     }
                 });
             });
@@ -840,6 +847,8 @@ window.App = (function() {
             dlDdmodDestClear.addEventListener('click', function() {
                 var inp = document.getElementById('dl-ddmod-dest-path');
                 if (inp) inp.value = '';
+                var warn = document.getElementById('dl-ddmod-dest-warning');
+                if (warn) warn.classList.add('hidden');
             });
         }
 
@@ -1348,6 +1357,7 @@ window.App = (function() {
                     if (path) {
                         var inp = document.getElementById('ddmod-home-dest-path');
                         if (inp) inp.value = path;
+                        _checkDdmodDestOutsideLibraries(path, 'ddmod-home-dest-warning');
                     }
                 });
             });
@@ -1357,6 +1367,8 @@ window.App = (function() {
             ddmodHomeDestClear.addEventListener('click', function() {
                 var inp = document.getElementById('ddmod-home-dest-path');
                 if (inp) inp.value = '';
+                var warn = document.getElementById('ddmod-home-dest-warning');
+                if (warn) warn.classList.add('hidden');
             });
         }
 
@@ -1971,6 +1983,8 @@ window.App = (function() {
         var advActive = adv && !adv.classList.contains('hidden');
 
         var manifest_override = {};
+        var selectedBuildId = '';
+        var usedRadio = false;
         if (advActive && tbody) {
             var editDiv = document.getElementById('version-depot-edit');
             var editOn = editDiv && !editDiv.classList.contains('hidden');
@@ -1984,17 +1998,33 @@ window.App = (function() {
         } else {
             var radio = document.querySelector('#version-list .version-radio:checked');
             if (radio) {
+                usedRadio = true;
                 var g = (window._versionGroupsData || [])[parseInt(radio.dataset.group, 10)];
                 (g && g.entries || []).forEach(function(e) {
                     manifest_override[String(e.depot_id)] = String(e.manifest_id);
                 });
+                // Use the group the user actually picked, not a reverse
+                // manifest-ID guess: an unchanged depot (e.g. a static
+                // redistributable) can share its manifest with the newest
+                // group, which would make the guess resolve to the wrong
+                // (newest) build.
+                selectedBuildId = String((g && g.build_id) || '');
             }
         }
         if (!Object.keys(manifest_override).length) {
             Components.showToast('warning', 'Select a version first.');
             return;
         }
-        _downloadVersionWithOverride(appId, manifest_override, _buildIdForOverride(manifest_override));
+        // The reverse manifest-ID guess is only meaningful when there's no
+        // single selected group to read a build_id from (Advanced/manual
+        // picks can span depots from different builds). When the radio path
+        // was used but the group's own build_id is unknown (SteamDB has no
+        // patch-notes date for many apps), guessing via the heuristic risks
+        // landing on some other build's ID entirely — leave it blank instead
+        // so process_from_store falls back to its own "unknown" handling
+        // rather than confidently stamping a wrong build.
+        var buildId = usedRadio ? selectedBuildId : (selectedBuildId || _buildIdForOverride(manifest_override));
+        _downloadVersionWithOverride(appId, manifest_override, buildId);
     }
 
     // Search box in the version picker: numeric input is either a manifest
@@ -2105,22 +2135,29 @@ window.App = (function() {
         var raw = inp ? inp.value : '';
         if (!appId) return;
         var manifest_override = {};
+        var manualBuildId = '';
         raw.split(/\r?\n/).forEach(function(line) {
             var clean = (line || '').trim();
             if (!clean || clean.charAt(0) === '#') return;
-            var parts = clean.split(/[=,\s:]+/).filter(Boolean);
+            var parts = clean.split(/[=,\s:-]+/).filter(Boolean);
             if (parts.length < 2) return;
-            var depot = parts[0].trim();
-            var gid = parts[1].trim();
+            // 3 fields = buildid-depot-manifest; 2 fields = depot-manifest
+            // (no known build), same as before this option was added.
+            var buildid = parts.length >= 3 ? parts[0].trim() : '';
+            var depot = parts.length >= 3 ? parts[1].trim() : parts[0].trim();
+            var gid = parts.length >= 3 ? parts[2].trim() : parts[1].trim();
             if (/^\d+$/.test(depot) && /^\d+$/.test(gid)) {
                 manifest_override[depot] = gid;
+                if (!manualBuildId && /^\d+$/.test(buildid)) {
+                    manualBuildId = buildid;
+                }
             }
         });
         if (!Object.keys(manifest_override).length) {
-            Components.showToast('warning', 'Enter at least one line like 939851=2233225956230312354.');
+            Components.showToast('warning', 'Enter at least one line like 24424450-3751951-4397710407098141927.');
             return;
         }
-        _downloadVersionWithOverride(appId, manifest_override);
+        _downloadVersionWithOverride(appId, manifest_override, manualBuildId);
     }
 
     function _importVersionManifestHtml() {
@@ -2194,19 +2231,37 @@ window.App = (function() {
         var addManifest = document.getElementById('version-edit-add-manifest');
         var addBtn = document.getElementById('version-edit-add-btn');
         var tbody = document.getElementById('version-edit-tbody');
+        var dlBtn = document.getElementById('version-download');
         if (!editBtn || !editDiv) return;
+
+        function _syncDlBtnForEditMode() {
+            if (!dlBtn) return;
+            if (editDiv.classList.contains('hidden')) {
+                var checked = document.querySelectorAll('.version-check:checked');
+                dlBtn.disabled = checked.length === 0;
+            } else {
+                dlBtn.disabled = Object.keys(_getDepotEditOverrides()).length === 0;
+            }
+        }
 
         editBtn.addEventListener('click', function() {
             var groupsData = window._versionGroupsData || [];
             _populateDepotEditTable(groupsData);
             editDiv.classList.toggle('hidden');
             editBtn.textContent = editDiv.classList.contains('hidden') ? 'Edit Depots' : 'Editing...';
+            _syncDlBtnForEditMode();
         });
+
+        if (tbody) {
+            tbody.addEventListener('input', _syncDlBtnForEditMode);
+            tbody.addEventListener('click', _syncDlBtnForEditMode);
+        }
 
         if (doneBtn) {
             doneBtn.addEventListener('click', function() {
                 editDiv.classList.add('hidden');
                 if (editBtn) editBtn.textContent = 'Edit Depots';
+                _syncDlBtnForEditMode();
             });
         }
 
@@ -2218,6 +2273,7 @@ window.App = (function() {
                 _addDepotEditRow(tbody, depot, manifest);
                 addDepot.value = '';
                 addManifest.value = '';
+                _syncDlBtnForEditMode();
             });
         }
     }
@@ -2278,6 +2334,25 @@ window.App = (function() {
         return overrides;
     }
 
+    function _normalizeLibPath(p) {
+        return String(p || '').replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
+    }
+
+    // Shows a warning under the DDMod destination field when the chosen
+    // folder isn't one of Steam's registered libraries — Steam won't pick
+    // up an install there unless the folder is added as a library.
+    function _checkDdmodDestOutsideLibraries(path, warningElId) {
+        var warn = document.getElementById(warningElId);
+        if (!warn) return;
+        Bridge.callSync('get_steam_libraries', function(json) {
+            var libs;
+            try { libs = JSON.parse(json || '[]'); } catch(e) { libs = []; }
+            var target = _normalizeLibPath(path);
+            var isKnown = libs.some(function(lib) { return _normalizeLibPath(lib) === target; });
+            warn.classList.toggle('hidden', isKnown);
+        });
+    }
+
     function _withLibraryPick(cb) {
         Bridge.callSync('get_steam_libraries', function(json) {
             var libs;
@@ -2298,6 +2373,15 @@ window.App = (function() {
         Components.hideModal('version-modal');
         var method = window._olderVersionMethod || 'ddmod';
         var source = window._olderVersionSource || 'oureveryday';
+
+        // SLSsteam (Linux-only) is what actually enforces a pin — Steam
+        // Native/LumaCore handles ownership differently and has no
+        // config.yaml to pin against.
+        if (method !== 'steam_native' && window.confirm(
+            "Pin this version so Steam doesn't ask for an update or update the game?"
+        )) {
+            Bridge.call('pin_manifest_ids', appId, JSON.stringify(manifest_override));
+        }
 
         _withLibraryPick(function() {
             if (method === 'steam_native') {

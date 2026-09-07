@@ -38,6 +38,11 @@ from typing import Union
 logger = logging.getLogger(__name__)
 
 
+def _dlc_count(app_info: dict) -> int:
+    listofdlc = (app_info.get("extended") or {}).get("listofdlc") or ""
+    return len([x for x in str(listofdlc).split(",") if x.strip()])
+
+
 class SLSManager(AppInjectionManager):
     def __init__(self, steam_path, provider):
         self.steam_path = steam_path
@@ -84,6 +89,7 @@ class SLSManager(AppInjectionManager):
         self, data: Union[int, list[int], LuaParsedInfo], skip_check: bool = False
     ):
         from sff.linux.yaml_config import add_additional_app, add_dlc_data
+        known_depot_ids: set[str] = set()
         if isinstance(data, int):
             data = [data]
         elif isinstance(data, LuaParsedInfo):
@@ -94,7 +100,9 @@ class SLSManager(AppInjectionManager):
                 provider = create_provider_for_current_thread()
                 app_info = provider.get_single_app_info(int(data.app_id), quick=True)
                 depots = app_info.get("depots", {})
+                use_dlc_data = _dlc_count(app_info) >= 64
                 if isinstance(depots, dict):
+                    known_depot_ids = {str(k) for k in depots.keys() if str(k).isdigit()}
                     for depot_id, depot_meta in depots.items():
                         if not isinstance(depot_meta, dict):
                             continue
@@ -103,28 +111,27 @@ class SLSManager(AppInjectionManager):
                             dlc_id = int(dlcappid)
                             if dlc_id not in ids:
                                 ids.append(dlc_id)
-                            # Register DLC relationship in DlcData
-                            dlc_name = ""
-                            try:
-                                dlc_info = provider.get_single_app_info(dlc_id)
-                                dlc_name = (dlc_info.get("common") or {}).get("name", "")
-                            except Exception:
-                                pass
-                            if not dlc_name:
-                                dlc_name = depot_meta.get("name", "") or (app_info.get("common") or {}).get("name", "")
-                            add_dlc_data(self.sls_config_path, str(data.app_id), str(dlc_id), dlc_name)
+                            if use_dlc_data:
+                                dlc_name = ""
+                                try:
+                                    dlc_info = provider.get_single_app_info(dlc_id)
+                                    dlc_name = (dlc_info.get("common") or {}).get("name", "")
+                                except Exception:
+                                    pass
+                                if not dlc_name:
+                                    dlc_name = depot_meta.get("name", "") or (app_info.get("common") or {}).get("name", "")
+                                add_dlc_data(self.sls_config_path, str(data.app_id), str(dlc_id), dlc_name)
             except Exception as e:
                 logger.debug("add_ids: DLC lookup failed for %s: %s", data.app_id, e)
             data = ids
         changes = 0
         for new_app_id in data:
-            added = add_additional_app(self.sls_config_path, str(new_app_id))
-            if added:
-                print(f"{new_app_id} added to SLSSteam config.")
-                changes += 1
-            else:
-                print(f"{new_app_id} already in SLSSteam config.")
-            # Try to register DlcData for this ID if it's a DLC
+            # depots aren't real apps
+            if str(new_app_id) in known_depot_ids:
+                logger.debug("add_ids: skipping %s — known depot, not an app", new_app_id)
+                continue
+            # Try to register DlcData for this ID if it's a DLC of a
+            # 64+ DLC game (SLSsteam only needs the explicit map past that).
             try:
                 from sff.network.steam_client import create_provider_for_current_thread
                 _provider = create_provider_for_current_thread()
@@ -135,11 +142,19 @@ class SLSManager(AppInjectionManager):
                         if isinstance(_dmeta, dict) and _dmeta.get("dlcappid") == str(new_app_id):
                             _parent = _dmeta.get("depotfromapp")
                             if _parent:
-                                _dlc_name = (_info.get("common") or {}).get("name", "")
-                                add_dlc_data(self.sls_config_path, str(_parent), str(new_app_id), _dlc_name)
+                                _parent_info = _provider.get_single_app_info(int(_parent), quick=True)
+                                if _dlc_count(_parent_info) >= 64:
+                                    _dlc_name = (_info.get("common") or {}).get("name", "")
+                                    add_dlc_data(self.sls_config_path, str(_parent), str(new_app_id), _dlc_name)
                             break
             except Exception:
                 pass
+            added = add_additional_app(self.sls_config_path, str(new_app_id))
+            if added:
+                print(f"{new_app_id} added to SLSSteam config.")
+                changes += 1
+            else:
+                print(f"{new_app_id} already in SLSSteam config.")
 
     def _dlc_check_via_store(self, base_id):
         """DLC check using Steam Store API only (no Steam client login). Fallback when Steam API fails."""
@@ -170,7 +185,10 @@ class SLSManager(AppInjectionManager):
             mark = "O" if _in else "X"
             print(f"{_id:<{width_id}}  {_name:<{width_name}}  {mark}")
         if not_in_config:
-            print("Some DLCs are not in the SLSSteam config.")
+            print(
+                f"{len(not_in_config)} DLC(s) not in the SLSSteam config (IDs: "
+                + ", ".join(str(x) for x in not_in_config) + ")."
+            )
             if prompt_confirm("Do you want to add these to the config?"):
                 self.add_ids(not_in_config, skip_check=False)
         else:
@@ -291,8 +309,9 @@ class SLSManager(AppInjectionManager):
                 )
                 if len(unowned_non_depot_dlcs) > 0:
                     print(
-                        "This game has pre-installed DLCs that aren't "
-                        "in the AppList."
+                        f"{len(unowned_non_depot_dlcs)} pre-installed DLC(s) aren't in the "
+                        "AppList (IDs: "
+                        + ", ".join(str(x) for x in unowned_non_depot_dlcs) + ")."
                     )
                     if prompt_confirm("Do you want to add these to the AppList?"):
                         self.add_ids(unowned_non_depot_dlcs, skip_check=False)

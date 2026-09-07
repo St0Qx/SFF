@@ -82,8 +82,14 @@ def parse_lua_contents(contents, path):
     if not depot_dec_key:
         return None
     # The base game is the keyless addappid(N) entry; depots carry keys.
-    # Some luas list depots first, so the first addappid can be a depot id.
-    app_id = ids_with_no_key[0] if ids_with_no_key else any_addappid.group(1)
+    # Fall back to the numeric filename before guessing from content.
+    stem = path.stem if path is not None else ""
+    if ids_with_no_key:
+        app_id = ids_with_no_key[0]
+    elif stem.isdigit():
+        app_id = stem
+    else:
+        app_id = any_addappid.group(1)
     depot_pairs = [DepotKeyPair(*x) for x in depot_dec_key]
     depot_pairs.extend([DepotKeyPair(x, "") for x in ids_with_no_key])
     manifest_overrides = dict(_SETMANIFESTID_REGEX.findall(contents))

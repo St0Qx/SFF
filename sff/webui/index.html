@@ -629,6 +629,9 @@ start YourGame-Shipping.exe</pre>
                 <h1>Downloads</h1>
                 <p class="page-subtitle">Active downloads and history</p>
             </div>
+            <div class="info-callout">
+                <strong>Note</strong> — the progress bar can look stuck on large files; give it a few minutes. If it still hasn't moved after that, the download is likely stale.
+            </div>
             <div id="downloads-active" class="downloads-section">
                 <h2 class="section-title">Active Downloads</h2>
                 <div id="downloads-active-list" class="downloads-list"></div>
@@ -1296,7 +1299,7 @@ start YourGame-Shipping.exe</pre>
             <div class="settings-section">
                 <h2 class="section-title">Download Settings</h2>
                 <div class="input-group">
-                    <label>Chunk Download Concurrency:</label>
+                    <label>Chunk Download Concurrency (min: 8 - max: 64):</label>
                     <input type="number" id="setting-download-concurrency" value="32" min="8" max="64" data-tooltip="Max simultaneous chunk downloads. Higher = faster downloads on fast connections. 32 is the default.">
                 </div>
                 <div class="input-group">
@@ -1672,6 +1675,7 @@ start YourGame-Shipping.exe</pre>
                         <button id="dl-ddmod-dest-browse" class="btn btn-sm">Browse</button>
                         <button id="dl-ddmod-dest-clear" class="btn btn-sm">Clear</button>
                     </div>
+                    <div id="dl-ddmod-dest-warning" class="hidden" style="font-size:11px; color:#e0a030; margin-top:4px;">This is outside your Steam libraries — Steam won't see this install unless the folder is added as one.</div>
                 </div>
                 <button id="dl-fastest" class="download-option" data-tooltip="Adds the game to Steam's library. Open Steam to download. No depot pull is performed by SteaMidra.">
                     <svg class="dl-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
@@ -1977,12 +1981,13 @@ start YourGame-Shipping.exe</pre>
                     </div>
                 </div>
                 <div style="margin-bottom:10px;">
-                    <div style="font-size:11px; opacity:0.7; margin-bottom:4px;">Download location:</div>
+                    <div style="font-size:11px; opacity:0.7; margin-bottom:4px;">DDMod download location:</div>
                     <div style="display:flex; gap:8px; align-items:center;">
                         <input type="text" id="ddmod-home-dest-path" readonly placeholder="Choose where DDMod should download..." style="flex:1; font-size:12px;">
                         <button id="ddmod-home-dest-browse" class="btn btn-sm">Browse</button>
                         <button id="ddmod-home-dest-clear" class="btn btn-sm">Clear</button>
                     </div>
+                    <div id="ddmod-home-dest-warning" class="hidden" style="font-size:11px; color:#e0a030; margin-top:4px;">This is outside your Steam libraries — Steam won't see this install unless the folder is added as one.</div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -2036,19 +2041,19 @@ start YourGame-Shipping.exe</pre>
                 </div>
                 <div style="margin-top:12px;border-top:1px solid var(--border,rgba(255,255,255,0.12));padding-top:10px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-                        <label style="font-size:12px;font-weight:600;opacity:0.8;">Manual Depot / Manifest IDs</label>
+                        <label style="font-size:12px;font-weight:600;opacity:0.8;">Manual Build / Depot / Manifest IDs</label>
                         <div style="display:flex;gap:6px;">
                             <button id="version-edit-toggle" class="btn" style="padding:6px 10px;font-size:12px;">Edit Depots</button>
                             <button id="version-import-html" class="btn" style="padding:6px 10px;font-size:12px;">Import HTML</button>
                         </div>
                     </div>
-                    <textarea id="version-manual-input" rows="4" placeholder="One per line, for example:&#10;939851=2233225956230312354&#10;939852 45510479311498930" style="width:100%;box-sizing:border-box;margin-top:6px;font-family:monospace;font-size:12px;"></textarea>
-                    <div style="font-size:11px;opacity:0.65;margin-top:4px;">Use this when the history list is empty or SteamDB blocks the request. Format: depot ID, then manifest GID. Import HTML lists saved SteamDB depot pages above so you can select them.</div>
+                    <div style="font-size:11px;opacity:0.65;margin-top:4px;">Use this when the history list is empty or SteamDB blocks the request. Format: build ID (optional), depot ID, then manifest GID — depot ID and manifest GID alone (939851=2233225956230312354) also still works. Import HTML lists saved SteamDB depot pages above so you can select them. Without a build ID, the latest build ID will be set for the game even if the files are for an older build.</div>
+                    <textarea id="version-manual-input" rows="4" placeholder="One per line, example:&#10;24424450-3751951-4397710407098141927&#10;24424450 3751951 4397710407098141927" style="width:100%;box-sizing:border-box;margin-top:6px;font-family:monospace;font-size:12px;"></textarea>
                 </div>
                 </div><!-- /version-advanced -->
             </div>
             <div class="modal-footer">
-                <button id="version-download" class="btn btn-primary" disabled>Download Selected</button>
+                <button id="version-download" class="btn btn-primary" disabled data-tooltip="Select a version first">Download Selected</button>
                 <button id="version-manual-download" class="btn" style="display:none;">Download Manual IDs</button>
                 <button class="btn modal-cancel">Cancel</button>
             </div>
