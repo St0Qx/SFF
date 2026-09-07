@@ -160,9 +160,9 @@ _LC_RESET_FILES = (
     ("bin", "lcoverlay.dll"),
 )
 
-_PATTERN_REPO_RAW = "https://raw.githubusercontent.com/KoriaPolis/Steam-Auto-PT/pattern"
-_PATTERN_REPO_CDN = "https://cdn.jsdelivr.net/gh/KoriaPolis/Steam-Auto-PT@pattern"
-_PATTERN_REPO_GITFLIC = "https://gitflic.ru/api/project/midrags/steam-auto-pt/blob"
+_PATTERN_REPO_RAW = "https://raw.githubusercontent.com/michelegoku3/MigoReleases/pattern"
+# _PATTERN_REPO_CDN = "https://cdn.jsdelivr.net/gh/KoriaPolis/Steam-Auto-PT@pattern"
+# _PATTERN_REPO_GITFLIC = "https://gitflic.ru/api/project/midrags/steam-auto-pt/blob"
 
 
 def _progress(msg: str, callback: Optional[Callable[[str], None]]) -> None:
@@ -297,42 +297,17 @@ def _looks_like_pattern_toml(body: str, subdir: str) -> bool:
 
 def _download_pattern_body(subdir: str, sha: str) -> Optional[str]:
     rel = f"{subdir}/{sha}.toml" if subdir else f"{sha}.toml"
-    urls = (
-        f"{_PATTERN_REPO_RAW}/{rel}",
-        f"{_PATTERN_REPO_CDN}/{rel}",
-    )
-    primary_not_found = False
+    url = f"{_PATTERN_REPO_RAW}/{rel}"
     headers = {"Cache-Control": "no-cache", "Accept": "text/plain,*/*"}
-    for url in urls:
-        if primary_not_found:
-            break
-        try:
-            resp = httpx.get(url, headers=headers, timeout=10, follow_redirects=True)
-            if resp.status_code == 200 and _looks_like_pattern_toml(resp.text, subdir):
-                return resp.text
-            if resp.status_code == 404:
-                primary_not_found = True
-        except httpx.HTTPError:
-            continue
-
-    if primary_not_found:
-        return None
-
     try:
-        resp = httpx.get(
-            _PATTERN_REPO_GITFLIC,
-            params={"branch": "pattern", "file": rel},
-            headers={"Accept": "application/json"},
-            timeout=10,
-            follow_redirects=True,
-        )
-        if resp.status_code == 200:
-            body = _stitch_gitflic_body(resp)
-            if _looks_like_pattern_toml(body, subdir):
-                return body
+        resp = httpx.get(url, headers=headers, timeout=10, follow_redirects=True)
+        if resp.status_code == 200 and _looks_like_pattern_toml(resp.text, subdir):
+            return resp.text
     except httpx.HTTPError:
-        return None
+        pass
     return None
+    # Old mirrors (jsdelivr CDN + gitflic fallback) retired in favour of the
+    # single MigoReleases pattern branch; see _PATTERN_REPO_* above.
 
 
 def _write_pattern_cache(target: Path, body: str) -> None:
