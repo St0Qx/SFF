@@ -1217,7 +1217,7 @@ class WebBridge(QObject):
             if result is MainReturnCode.LOOP_NO_PROMPT:
                 self.download_progress.emit(json.dumps({
                     "app_id": app_id,
-                    "status": "ACF written, starting DDMod download...",
+                    "status": "ACF written, starting native download...",
                     "progress": 50,
                 }))
                 return self._run_linux_ddmod_fallback(app_id, manifest_override, lib_override)
