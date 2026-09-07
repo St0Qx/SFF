@@ -413,10 +413,10 @@ def patch_steam_jupiter(print_fn=print) -> bool:
         os.close(fd)
         tmp = Path(tmp_name)
         tmp.write_text("\n".join(patched) + "\n", encoding="utf-8")
-        if not (STEAM_JUPITER.parent / "steam-jupiter.steamidra.bak").exists():
-            print_fn(Fore.CYAN + "[jupiter] Backing up original to steam-jupiter.steamidra.bak..." + Style.RESET_ALL)
+        if not (STEAM_JUPITER.parent / "steam-jupiter.bak").exists():
+            print_fn(Fore.CYAN + "[jupiter] Backing up original to steam-jupiter.bak..." + Style.RESET_ALL)
             subprocess.run(["sudo", "cp", str(STEAM_JUPITER),
-                            str(STEAM_JUPITER.parent / "steam-jupiter.steamidra.bak")],
+                            str(STEAM_JUPITER.parent / "steam-jupiter.bak")],
                            timeout=30, check=True)
         print_fn(Fore.CYAN + "[jupiter] Writing patched steam-jupiter (sudo)..." + Style.RESET_ALL)
         subprocess.run(["sudo", "cp", str(tmp), str(STEAM_JUPITER)], timeout=30, check=True)

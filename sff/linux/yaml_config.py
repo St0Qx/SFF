@@ -40,16 +40,16 @@ logger = logging.getLogger(__name__)
 BACKUP_SUFFIX = ".bak"
 DEFAULT_FAKE_APPID = "480"  # Spacewar
 
-_RE_ADDITIONAL_APPS = re.compile(r"^AdditionalApps:\s*(?:#.*)?$", re.MULTILINE)
-_RE_APP_TOKENS = re.compile(r"^AppTokens:\s*(?:#.*)?$", re.MULTILINE)
-_RE_MANIFEST_IDS = re.compile(r"^ManifestIds:\s*(?:#.*)?$", re.MULTILINE)
-_RE_DLC_DATA = re.compile(r"^DlcData:\s*(?:#.*)?$", re.MULTILINE)
-_RE_FAKE_APP_IDS = re.compile(r"^FakeAppIds:\s*(?:#.*)?$", re.MULTILINE)
-_RE_NEXT_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]*:\s*$", re.MULTILINE)
+_RE_ADDITIONAL_APPS = re.compile(r"^AdditionalApps:[ \t]*(?:#.*)?$", re.MULTILINE)
+_RE_APP_TOKENS = re.compile(r"^AppTokens:[ \t]*(?:#.*)?$", re.MULTILINE)
+_RE_MANIFEST_IDS = re.compile(r"^ManifestIds:[ \t]*(?:#.*)?$", re.MULTILINE)
+_RE_DLC_DATA = re.compile(r"^DlcData:[ \t]*(?:#.*)?$", re.MULTILINE)
+_RE_FAKE_APP_IDS = re.compile(r"^FakeAppIds:[ \t]*(?:#.*)?$", re.MULTILINE)
+_RE_NEXT_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]*:[ \t]*$", re.MULTILINE)
 _RE_NEXT_KEY_SIMPLE = re.compile(r"^[A-Za-z]", re.MULTILINE)
-_RE_MISALIGNED_ITEMS = re.compile(r"(^)(\s*)-(\s*)([^\n#]+?)(?=\s*(?:#|$))", re.MULTILINE)
-_RE_LAST_TOKEN = re.compile(r"^\s*\d+\s*:\s*[^\n]*$", re.MULTILINE)
-_RE_TOKEN = re.compile(r"(^)(\s*)(\d+)(\s*:\s*[^\n]*)", re.MULTILINE)
+_RE_MISALIGNED_ITEMS = re.compile(r"(^)([ \t]*)-([ \t]*)([^\n#]+?)(?=[ \t]*(?:#|$))", re.MULTILINE)
+_RE_LAST_TOKEN = re.compile(r"^[ \t]*\d+[ \t]*:[ \t]*[^\n]*$", re.MULTILINE)
+_RE_TOKEN = re.compile(r"(^)([ \t]*)(\d+)([ \t]*:[ \t]*[^\n]*)", re.MULTILINE)
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +300,7 @@ def update_yaml_boolean_value(config_path: Path, key: str, value: bool) -> bool:
         if content is None:
             return False
         pat = re.compile(
-            r"^(\s*)" + re.escape(key) + r"\s*:\s*(yes|no|true|false|Yes|No|True|False)\b",
+            r"^([ \t]*)" + re.escape(key) + r"[ \t]*:[ \t]*(yes|no|true|false|Yes|No|True|False)\b",
             re.MULTILINE,
         )
         match = pat.search(content)
@@ -378,28 +378,25 @@ def _init_config_with_app(config_path: Path, app_id: str, comment: str) -> bool:
 
 
 def _append_to_additional_apps(content: str, app_id: str, comment: str, match: re.Match) -> str:
-    start_pos = match.end()
-    if start_pos < len(content) and content[start_pos] == "\n":
-        start_pos += 1
-    remaining = content[start_pos:]
-    lines = remaining.split("\n")
-    last_item_end = start_pos
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("-"):
-            last_item_end = start_pos + sum(len(lines[j]) + 1 for j in range(i + 1))
-        elif not stripped or stripped.startswith("#"):
-            continue
-        else:
-            break
-    else:
-        last_item_end = len(content)
+    section_start = match.end()
+    if section_start < len(content) and content[section_start] == "\n":
+        section_start += 1
+    # Bound to this section, so a write can't spill past it.
+    section_end = _get_section_end(content, section_start, _RE_NEXT_KEY_SIMPLE)
+    section = content[section_start:section_end]
+
+    insert_at = section_start
+    offset = 0
+    for line in section.split("\n"):
+        offset += len(line) + 1
+        if line.strip().startswith("-"):
+            insert_at = section_start + offset
 
     entry = f"  - {app_id}"
     if comment:
         entry += f"   # {comment}"
     entry += "\n"
-    return content[:last_item_end] + entry + content[last_item_end:]
+    return content[:insert_at] + entry + content[insert_at:]
 
 
 _SLSSTEAM_REQUIRED_FIELDS = (
@@ -428,7 +425,7 @@ def _patch_missing_slssteam_fields(config_path: Path, content: str) -> str | Non
     missing: list[str] = []
     for field in _SLSSTEAM_REQUIRED_FIELDS:
         key = field.split(":", 1)[0]
-        pat = re.compile(rf"^{re.escape(key)}\s*:", re.MULTILINE)
+        pat = re.compile(rf"^{re.escape(key)}[ \t]*:", re.MULTILINE)
         if not pat.search(content):
             missing.append(field)
     if not missing:
@@ -453,7 +450,7 @@ def add_additional_app(config_path: Path, app_id: str, comment: str = "") -> boo
 
         fixed, _ = _fix_additional_apps_indentation(content)
 
-        existing = re.compile(rf"^\s*-\s*{re.escape(app_id)}\s*(?:#.*)?$", re.MULTILINE)
+        existing = re.compile(rf"^[ \t]*-[ \t]*{re.escape(app_id)}[ \t]*(?:#.*)?$", re.MULTILINE)
         if existing.search(fixed):
             logger.debug(f"AppID '{app_id}' already in AdditionalApps")
             # Patch missing SLSsteam fields even when app already exists
@@ -467,7 +464,7 @@ def add_additional_app(config_path: Path, app_id: str, comment: str = "") -> boo
             if fixed is None:
                 fixed = _read_config(config_path) or ""
 
-        header = re.compile(r"^AdditionalApps:\s*(?:#.*)?$", re.MULTILINE)
+        header = re.compile(r"^AdditionalApps:[ \t]*(?:#.*)?$", re.MULTILINE)
         match = header.search(fixed)
         if match:
             new_content = _append_to_additional_apps(fixed, app_id, comment, match)
@@ -499,13 +496,13 @@ def is_additional_app(config_path: Path, app_id: str) -> bool:
     # Search only inside the section, otherwise "- 480" under FakeAppIds
     # matches and the app is wrongly treated as unowned.
     section = content[start:_get_section_end(content, start, _RE_NEXT_KEY_SIMPLE)]
-    pat = re.compile(rf"^\s*-\s*{re.escape(app_id)}\s*(?:#.*)?$", re.MULTILINE)
+    pat = re.compile(rf"^[ \t]*-[ \t]*{re.escape(app_id)}[ \t]*(?:#.*)?$", re.MULTILINE)
     return bool(pat.search(section))
 
 
 def remove_additional_app(config_path: Path, app_id: str) -> bool:
     """Remove an AppID from AdditionalApps."""
-    pat = re.compile(rf"^\s*-\s*{re.escape(app_id)}\s*(?:#.*)?$", re.MULTILINE)
+    pat = re.compile(rf"^[ \t]*-[ \t]*{re.escape(app_id)}[ \t]*(?:#.*)?$", re.MULTILINE)
     return _remove_matching_entry(
         config_path, pat,
         f"Removed AppID '{app_id}' from AdditionalApps",
@@ -534,7 +531,7 @@ def add_app_token(config_path: Path, app_id: str, token: str) -> bool:
         content = fixed
 
         section = _get_app_tokens_section(content)
-        existing = re.compile(rf"^ {{2}}{re.escape(app_id)}\s*:\s*(.+)$", re.MULTILINE)
+        existing = re.compile(rf"^ {{2}}{re.escape(app_id)}[ \t]*:[ \t]*(.+)$", re.MULTILINE)
         existing_match = existing.search(section)
 
         if existing_match:
@@ -580,7 +577,7 @@ def get_app_tokens(config_path: Path) -> Dict[str, str]:
         with open(config_path, "r", encoding="utf-8") as f:
             content = f.read()
         section = _get_app_tokens_section(content)
-        for m in re.finditer(r"^\s*(\d+)\s*:\s*(.+)$", section, re.MULTILINE):
+        for m in re.finditer(r"^[ \t]*(\d+)[ \t]*:[ \t]*(.+)$", section, re.MULTILINE):
             tokens[m.group(1).strip()] = m.group(2).strip()
     except OSError as e:
         logger.error(f"Failed to read AppTokens from {config_path}: {e}", exc_info=True)
@@ -611,15 +608,21 @@ def add_manifest_id(config_path: Path, depot_id: str, manifest_id: str) -> bool:
         fixed, _ = _fix_manifest_ids_indentation(content)
         content = fixed
 
-        section = _get_manifest_ids_section(content)
-        existing = re.compile(rf"^ {{2}}{re.escape(depot_id)}\s*:\s*(.+)$", re.MULTILINE)
+        # Bound to this section only, so a write can't land past it.
+        header_match = header.search(content)
+        section_start = header_match.end()
+        if section_start < len(content) and content[section_start] == "\n":
+            section_start += 1
+        section_end = _get_section_end(content, section_start, _RE_NEXT_KEY)
+        section = content[section_start:section_end]
+
+        existing = re.compile(rf"^ {{2}}{re.escape(depot_id)}[ \t]*:[ \t]*(.+)$", re.MULTILINE)
         existing_match = existing.search(section)
 
         if existing_match:
             if existing_match.group(1).strip() == str(manifest_id):
                 return False
-            ids_start = content.find("ManifestIds:")
-            line_start = ids_start + len("ManifestIds:\n") + existing_match.start()
+            line_start = section_start + existing_match.start()
             line_end = line_start + len(existing_match.group(0))
             new_line = f"  {depot_id}: {manifest_id}"
             new_content = content[:line_start] + new_line + content[line_end:]
@@ -629,16 +632,15 @@ def add_manifest_id(config_path: Path, depot_id: str, manifest_id: str) -> bool:
                 return True
             return False
 
-        new_id_line = f"  {depot_id}: {manifest_id}"
-        id_line_pat = re.compile(r"(^ManifestIds:\n)( {2}\S+:[^\n]*)", re.MULTILINE)
-        id_match = id_line_pat.search(content)
-        if id_match:
-            new_content = (
-                content[: id_match.end()] + "\n" + new_id_line + content[id_match.end():]
-            )
-        else:
-            new_content = content.replace("ManifestIds:", "ManifestIds:\n" + new_id_line, 1)
+        insert_at = section_start
+        offset = 0
+        for line in section.split("\n"):
+            offset += len(line) + 1
+            if re.match(r"^[ \t]*\d+[ \t]*:", line):
+                insert_at = section_start + offset
 
+        new_line = f"  {depot_id}: {manifest_id}\n"
+        new_content = content[:insert_at] + new_line + content[insert_at:]
         _create_backup(config_path)
         if _atomic_write(config_path, new_content):
             logger.info(f"Added ManifestId for depot '{depot_id}'")
@@ -651,7 +653,7 @@ def add_manifest_id(config_path: Path, depot_id: str, manifest_id: str) -> bool:
 
 def remove_manifest_id(config_path: Path, depot_id: str) -> bool:
     """Remove a depot's pinned manifest from the ManifestIds section."""
-    pat = re.compile(rf"^ {{2}}{re.escape(depot_id)}\s*:\s*[^\n]*$", re.MULTILINE)
+    pat = re.compile(rf"^ {{2}}{re.escape(depot_id)}[ \t]*:[ \t]*[^\n]*$", re.MULTILINE)
     return _remove_matching_entry(
         config_path, pat,
         f"Removed ManifestId for depot '{depot_id}'",
@@ -668,7 +670,7 @@ def get_manifest_ids(config_path: Path) -> Dict[str, str]:
         with open(config_path, "r", encoding="utf-8") as f:
             content = f.read()
         section = _get_manifest_ids_section(content)
-        for m in re.finditer(r"^\s*(\d+)\s*:\s*(\d+)\s*$", section, re.MULTILINE):
+        for m in re.finditer(r"^[ \t]*(\d+)[ \t]*:[ \t]*(\d+)[ \t]*$", section, re.MULTILINE):
             ids[m.group(1).strip()] = m.group(2).strip()
     except OSError as e:
         logger.error(f"Failed to read ManifestIds from {config_path}: {e}", exc_info=True)
@@ -700,26 +702,38 @@ def add_dlc_data(
         dlc_header = _RE_DLC_DATA
         match = dlc_header.search(content)
 
+        safe_name = f'"{dlc_name}"' if dlc_name else '""'
+
         if not match:
-            safe_name = f'"{dlc_name}"' if dlc_name else '""'
             new_entry = f"DlcData:\n  {parent_app_id}:\n    {dlc_id}: {safe_name}\n"
             _create_backup(config_path)
             return _atomic_write_and_log_dlc(
                 config_path, content + "\n" + new_entry, dlc_name, dlc_id, parent_app_id
             )
 
-        dlc_data_end = match.end()
+        # Bound to this section, so a search can't spill into the next.
+        section_start = match.end()
+        if section_start < len(content) and content[section_start] == "\n":
+            section_start += 1
+        section_end = _get_section_end(content, section_start, _RE_NEXT_KEY_SIMPLE)
+        section = content[section_start:section_end]
 
-        parent_pat = re.compile(rf"^(\s*){re.escape(parent_app_id)}:\s*(?:#.*)?$", re.MULTILINE)
-        parent_match = parent_pat.search(content, dlc_data_end)
+        # section_end includes the next header's leading comment; skip past it.
+        def _end_of_last_content_line(text: str, base: int) -> int:
+            pos = base
+            offset = 0
+            for line in text.split("\n"):
+                offset += len(line) + 1
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    pos = base + offset
+            return pos
 
-        safe_name = f'"{dlc_name}"' if dlc_name else '""'
+        parent_pat = re.compile(rf"^([ \t]*){re.escape(parent_app_id)}:[ \t]*(?:#.*)?$", re.MULTILINE)
+        parent_match = parent_pat.search(section)
 
         if not parent_match:
-            remaining = content[dlc_data_end:]
-            next_key = _RE_NEXT_KEY_SIMPLE
-            nm = next_key.search(remaining)
-            insert_pos = dlc_data_end + nm.start() if nm else len(content)
+            insert_pos = _end_of_last_content_line(section, section_start)
             new_entry = f"  {parent_app_id}:\n    {dlc_id}: {safe_name}\n"
             new_content = content[:insert_pos] + new_entry + content[insert_pos:]
             _create_backup(config_path)
@@ -727,28 +741,21 @@ def add_dlc_data(
                 config_path, new_content, dlc_name, dlc_id, parent_app_id
             )
 
-        parent_line_end = parent_match.end()
         parent_indent = len(parent_match.group(1))
-        remaining = content[parent_line_end:]
+        parent_line_end = section_start + parent_match.end()
+        remaining = content[parent_line_end:section_end]
 
-        next_parent = re.compile(rf"^(\s{{{parent_indent}}})[0-9]", re.MULTILINE)
+        next_parent = re.compile(rf"^\s{{{parent_indent}}}[0-9]", re.MULTILINE)
         nm = next_parent.search(remaining)
 
         if nm:
             parent_section = remaining[: nm.start()]
             insert_pos = parent_line_end + nm.start()
         else:
-            after_dlcdata = content[dlc_data_end:]
-            end_m = _RE_NEXT_KEY_SIMPLE.search(after_dlcdata)
-            if end_m:
-                limit = dlc_data_end + end_m.start() - parent_line_end
-                parent_section = remaining[:limit]
-                insert_pos = dlc_data_end + end_m.start()
-            else:
-                parent_section = remaining
-                insert_pos = len(content)
+            parent_section = remaining
+            insert_pos = _end_of_last_content_line(remaining, parent_line_end)
 
-        dup_check = re.compile(rf'^\s*{re.escape(dlc_id)}:\s*"', re.MULTILINE)
+        dup_check = re.compile(rf'^[ \t]*{re.escape(dlc_id)}:[ \t]*"', re.MULTILINE)
         if dup_check.search(parent_section):
             logger.debug(f"DLC '{dlc_id}' already exists under AppID '{parent_app_id}'")
             return False
@@ -787,7 +794,7 @@ def get_fake_app_ids(config_path: Path, fake_appid: str = "") -> Set[str]:
         next_key = _RE_NEXT_KEY_SIMPLE
         nm = next_key.search(after)
         section = after[: nm.start()] if nm else after
-        entry_re = re.compile(rf"^\s*(\d+)\s*:\s*{re.escape(fake_appid)}", re.MULTILINE)
+        entry_re = re.compile(rf"^[ \t]*(\d+)[ \t]*:[ \t]*{re.escape(fake_appid)}", re.MULTILINE)
         for m in entry_re.finditer(section):
             ids.add(m.group(1).strip())
     except OSError as e:
@@ -811,7 +818,7 @@ def get_fake_appid(config_path: Path, app_id: str) -> Optional[str]:
         next_key = _RE_NEXT_KEY_SIMPLE
         nm = next_key.search(after)
         section = after[: nm.start()] if nm else after
-        entry_re = re.compile(rf"^\s*{re.escape(app_id)}\s*:\s*(\d+)", re.MULTILINE)
+        entry_re = re.compile(rf"^[ \t]*{re.escape(app_id)}[ \t]*:[ \t]*(\d+)", re.MULTILINE)
         m = entry_re.search(section)
         return m.group(1).strip() if m else None
     except OSError as e:
@@ -841,7 +848,7 @@ def add_fake_app_id(
             return _atomic_write(config_path, entry)
 
         existing = re.compile(
-            rf"^\s*{re.escape(app_id)}\s*:\s*{re.escape(fake_appid)}", re.MULTILINE
+            rf"^[ \t]*{re.escape(app_id)}[ \t]*:[ \t]*{re.escape(fake_appid)}", re.MULTILINE
         )
         if existing.search(content):
             return False
@@ -890,7 +897,7 @@ def remove_fake_app_id(config_path: Path, app_id: str, fake_appid: str = "") -> 
     if not fake_appid:
         fake_appid = DEFAULT_FAKE_APPID
     pat = re.compile(
-        rf"^\s*{re.escape(app_id)}\s*:\s*{re.escape(fake_appid)}(?:\s*#.*)?$",
+        rf"^[ \t]*{re.escape(app_id)}[ \t]*:[ \t]*{re.escape(fake_appid)}(?:[ \t]*#.*)?$",
         re.MULTILINE,
     )
     return _remove_matching_entry(

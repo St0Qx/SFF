@@ -1513,7 +1513,10 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
             )
             parsed.app_id = app_id
 
-        lua_depots = {str(pair.depot_id) for pair in parsed.depots}
+        lua_depots = {
+            str(pair.depot_id) for pair in parsed.depots
+            if str(pair.depot_id) != str(parsed.app_id)
+        }
         override = {depot: gid for depot, gid in build_pins.items() if depot in lua_depots}
         if not override:
             bridge.download_progress.emit(json.dumps({
@@ -2002,7 +2005,7 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
             depots_dict = {}
             manifests_dict = {}
             for d in parsed.depots:
-                if d.decryption_key:
+                if d.decryption_key and str(d.depot_id) != str(parsed.app_id):
                     depots_dict[str(d.depot_id)] = {"key": d.decryption_key}
 
             _depot_ids_set = set(depots_dict.keys())

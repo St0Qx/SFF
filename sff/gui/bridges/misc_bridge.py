@@ -1820,6 +1820,19 @@ def _bridge_is_steamos(bridge):
     except Exception:
         return ""
 
+def _bridge_enable_deck_safe_mode(bridge):
+    """Enable SafeMode so SLSsteam disables itself instead of crashing Steam after a client update."""
+    try:
+        from sff.linux.yaml_config import get_user_config_path, update_yaml_boolean_value
+        config_path = get_user_config_path()
+        if not config_path.exists():
+            return ""
+        update_yaml_boolean_value(config_path, "SafeMode", True)
+        return "true"
+    except Exception:
+        logger.exception("Failed to enable SafeMode for Gaming Mode")
+        return ""
+
 def _bridge_get_webui_translations(bridge, lang):
     """Return the webui translation JSON for the given language."""
     from sff.core.utils import root_folder

@@ -112,6 +112,7 @@ from sff.gui.bridges.misc_bridge import (
     _bridge_delete_game,
     _bridge_dlc_check_get_list,
     _bridge_dump_achievement_diagnostic,
+    _bridge_enable_deck_safe_mode,
     _bridge_enqueue_dropped_blobs,
     _bridge_enqueue_dropped_files,
     _bridge_export_settings_file,
@@ -2239,6 +2240,9 @@ class WebBridge(QObject):
     @pyqtSlot(result=str)
     def is_steamos(self):
         return _bridge_is_steamos(self)
+    @pyqtSlot(result=str)
+    def enable_deck_safe_mode(self):
+        return _bridge_enable_deck_safe_mode(self)
     @pyqtSlot(str, result=str)
     def get_webui_translations(self, lang):
         return _bridge_get_webui_translations(self, lang)
