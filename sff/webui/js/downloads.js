@@ -129,7 +129,7 @@ window.Downloads = (function() {
                     pauseBtn.disabled = true;
                     pauseBtn.textContent = 'Pausing…';
                     var prow = pauseBtn.closest('.download-item');
-                    var pname = prow && prow.querySelector('.download-item-name');
+                    var pname = prow && prow.querySelector('.download-name-text');
                     Bridge.call('download_pause_active', appid,
                         pname ? pname.textContent : '', 'oureveryday');
                     return;
@@ -138,7 +138,7 @@ window.Downloads = (function() {
                 if (!btn) return;
                 _pendingActiveCancel = btn.dataset.cancelAppid;
                 var row = btn.closest('.download-item');
-                var nameEl = row && row.querySelector('.download-item-name');
+                var nameEl = row && row.querySelector('.download-name-text');
                 var nameTarget = document.getElementById('queue-cancel-game-name');
                 if (nameTarget) nameTarget.textContent = nameEl ? nameEl.textContent : ('App ' + _pendingActiveCancel);
                 Components.showModal('queue-cancel-modal');
@@ -210,17 +210,11 @@ window.Downloads = (function() {
 
         var activeItems = [];
         var historyItems = [];
-        // Queue-managed downloads already render in the queue section with
-        // their own progress bar; showing them in Active too doubles rows.
-        var queueDownloading = {};
-        ((_queueState && _queueState.items) || []).forEach(function(it) {
-            if (it.state === 'downloading') queueDownloading[String(it.app_id)] = true;
-        });
 
         Object.keys(_downloads).forEach(function(id) {
             var dl = _downloads[id];
             if (dl.active) {
-                if (!queueDownloading[String(id)]) activeItems.push(dl);
+                activeItems.push(dl);
             } else {
                 historyItems.push(dl);
             }
@@ -260,16 +254,17 @@ window.Downloads = (function() {
     }
 
     function _patchActiveRow(el, dl) {
-        var nameEl = el.querySelector('.download-item-name');
+        var nameEl = el.querySelector('.download-name-text');
         if (nameEl && dl.name && nameEl.textContent !== dl.name) nameEl.textContent = dl.name;
-        var statusEl = el.querySelector('.download-item-status');
-        if (statusEl) {
+        var fill = el.querySelector('.progress-fill');
+        if (fill) fill.style.width = Math.min(100, dl.progress || 0) + '%';
+        var pct = el.querySelector('.queue-pct');
+        if (pct) pct.textContent = Math.round(dl.progress || 0) + '%';
+        var stat = el.querySelector('.queue-status');
+        if (stat) {
             var t = dl.status || 'Pending';
-            if (dl.progress !== undefined) t += ' — ' + Math.round(dl.progress) + '%';
-            if (statusEl.textContent !== t) statusEl.textContent = t;
+            if (stat.textContent !== t) stat.textContent = t;
         }
-        var fill = el.querySelector('.download-progress-fill');
-        if (fill) fill.style.width = (dl.progress || 0) + '%';
     }
 
     function _buildQueueRow(item) {
@@ -318,13 +313,16 @@ window.Downloads = (function() {
         var resumeBtn = document.getElementById('queue-resume');
         var items = (_queueState && _queueState.items) || [];
         var liveIds = {};
+        var seenIds = {};
         items.forEach(function(item) { liveIds[item.id] = true; });
         Object.keys(_cancelling).forEach(function(id) {
             if (!liveIds[id]) delete _cancelling[id];
         });
         if (listEl) {
-            var seenIds = {};
             items.forEach(function(item) {
+                // Downloading items live in Active Downloads; the queue
+                // section only shows waiting / paused / finished rows.
+                if (item.state === 'downloading' && !item.paused) return;
                 seenIds[item.id] = true;
                 var dl = _downloads[String(item.app_id)];
                 var progress = dl && typeof dl.progress === 'number' ? dl.progress : 0;
@@ -355,7 +353,7 @@ window.Downloads = (function() {
                 }
             });
         }
-        if (emptyEl) emptyEl.classList.toggle('hidden', items.length > 0);
+        if (emptyEl) emptyEl.classList.toggle('hidden', Object.keys(seenIds).length > 0);
         if (pauseBtn) pauseBtn.disabled = !!(_queueState && _queueState.paused);
         if (resumeBtn) resumeBtn.disabled = !(_queueState && _queueState.paused);
     }

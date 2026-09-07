@@ -263,40 +263,41 @@ window.Components = (function() {
         return item;
     }
 
-    // Create a download tracking item
+    // Create a download tracking item. Same box layout as the queue rows:
+    // name + state badge + source, progress bar, pct, status line, actions.
     function createDownloadItem(download) {
         var item = document.createElement('div');
         item.className = 'download-item';
         item.dataset.id = download.id || '';
 
-        var progressHtml = '';
-        if (download.progress !== undefined && download.progress !== null) {
-            progressHtml =
-                '<div class="download-progress-bar">' +
-                    '<div class="download-progress-fill" style="width:' + download.progress + '%"></div>' +
-                '</div>';
-        }
+        var state = download.active ? 'downloading'
+            : (download.status === 'Completed' ? 'done'
+            : (download.status === 'Cancelled' ? 'failed' : 'failed'));
+        var badgeClass = 'queue-badge-' + state;
+        var stateLabel = download.active ? 'downloading' : (download.status || '').toLowerCase();
 
-        var statusText = download.status || 'Pending';
-        if (download.progress !== undefined) {
-            statusText += ' — ' + Math.round(download.progress) + '%';
-        }
+        var sourceHtml = download.source
+            ? ' <span style="font-size:11px;opacity:0.65;">via ' + escapeHtml(download.source) + '</span>'
+            : '';
 
-        var cancelHtml = '';
+        var actionsHtml = '';
         if (download.active && download.id && download.id !== 'unknown') {
-            cancelHtml =
-                '<div class="download-actions" style="display:flex;align-items:center;gap:6px;">' +
+            actionsHtml =
+                '<div class="download-actions" style="display:flex;gap:6px;align-items:center;">' +
                     '<button class="btn btn-sm" data-pause-appid="' + escapeHtml(download.id) + '">Pause</button>' +
                     '<button class="btn btn-sm" data-cancel-appid="' + escapeHtml(download.id) + '">Cancel</button>' +
                 '</div>';
         }
 
         item.innerHTML =
-            '<div class="download-item-info">' +
-                '<div class="download-item-name">' + escapeHtml(download.name || 'Unknown') + '</div>' +
-                '<div class="download-item-status">' + escapeHtml(statusText) + '</div>' +
-                progressHtml +
-            '</div>' + cancelHtml;
+            '<div class="download-info" style="flex:1;">' +
+                '<div class="download-name"><span class="download-name-text">' + escapeHtml(download.name || 'Unknown') + '</span>' +
+                ' <span class="queue-state-badge ' + badgeClass + '">' + escapeHtml(stateLabel) + '</span>' +
+                sourceHtml + '</div>' +
+                '<div class="progress-bar" style="margin-top:4px;"><div class="progress-fill" style="width:' + (download.progress || 0) + '%"></div></div>' +
+                '<div class="queue-pct" style="font-size:11px;opacity:0.6;">' + Math.round(download.progress || 0) + '%</div>' +
+                '<div class="queue-status" style="font-size:11px;opacity:0.7;"></div>' +
+            '</div>' + actionsHtml;
 
         return item;
     }
