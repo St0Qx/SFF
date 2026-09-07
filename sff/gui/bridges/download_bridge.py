@@ -526,9 +526,11 @@ def _bridge_run_linux_fastest(bridge, app_id):
 
         depots = get_depots_for_app(app_id)
         manifest_override = {}
+        _dsizes = {}
         for depot_id, entries in depots.items():
             if entries:
                 manifest_override[str(depot_id)] = str(entries[0].manifest_id)
+                _dsizes[str(depot_id)] = float(getattr(entries[0], "size_mb", 0) or 0) * 1024 * 1024
 
         if not manifest_override:
             return "source_empty"
@@ -548,6 +550,7 @@ def _bridge_run_linux_fastest(bridge, app_id):
             lib_path=lib_override,
             print_fn=_make_run_download_print_fn(
                 bridge, app_id, _gname, list(manifest_override.keys()),
+                depot_sizes=_dsizes,
             ),
         )
 
@@ -561,7 +564,7 @@ def _bridge_run_linux_fastest(bridge, app_id):
                 "status": "ACF written, starting native download...",
                 "progress": 0,
             }))
-            return _bridge_run_linux_ddmod_fallback(bridge, app_id, manifest_override, lib_override)
+            return _bridge_run_linux_ddmod_fallback(bridge, app_id, manifest_override, lib_override, _dsizes)
 
         from sff.game import download_queue as _dq
         if _dq.is_cancelled(str(app_id)):
@@ -576,7 +579,7 @@ def _bridge_run_linux_fastest(bridge, app_id):
         return False
 
 
-def _bridge_run_linux_ddmod_fallback(bridge, app_id, manifest_override, lib_path):
+def _bridge_run_linux_ddmod_fallback(bridge, app_id, manifest_override, lib_path, depot_sizes=None):
     """After writing the ACF, kick off DDMod to actually download files."""
     try:
         from sff.downloads.depot_downloader import get_ddmod_dll, run_download
@@ -611,6 +614,7 @@ def _bridge_run_linux_ddmod_fallback(bridge, app_id, manifest_override, lib_path
             game_data, depots, lib_path, lib_path,
             print_fn=_make_run_download_print_fn(
                 bridge, str(app_id), _fname, depots,
+                depot_sizes=depot_sizes,
             ),
         )
         if ok:
@@ -965,17 +969,48 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
 
 # ── Version download ──────────────────────────────────────────────────
 
-def _make_run_download_print_fn(bridge, app_id, game_name, selected_depots, floor=0.0, ceil=100.0):
+def _depot_sizes_for(app_id):
+    """Depot id -> size in bytes from the depot history cache, for
+    byte-weighted progress. Empty dict when unavailable (equal slices)."""
+    try:
+        from sff.manifest.depot_history import get_depots_for_app
+        return {
+            str(d): float((e[0].size_mb if e else 0) or 0) * 1024 * 1024
+            for d, e in get_depots_for_app(app_id).items()
+        }
+    except Exception:
+        return {}
+
+
+def _make_run_download_print_fn(bridge, app_id, game_name, selected_depots,
+                                floor=0.0, ceil=100.0, depot_sizes=None):
     """print_fn for run_download that turns the engines' depot markers and
     [PROG] lines into download_progress events, so the Downloads tab shows
     the same "Downloading depot X... A / B (C/s)" rows as a normal download.
-    Each depot gets an equal slice of the floor-ceil progress range."""
+    Each depot gets a slice of the floor-ceil range weighted by its size in
+    bytes (depot_sizes), so 100% means every depot finished. Falls back to
+    equal slices when sizes are unknown."""
     import time as _t
     _span = ceil - floor
     n = max(len(selected_depots), 1)
+    _sizes = {str(k): float(v or 0) for k, v in (depot_sizes or {}).items()}
+    _total_size = sum(_sizes.get(str(d), 0) for d in selected_depots)
     _seen = []
     _last_emit = [0.0]
     _last_pct = [-1.0]
+
+    def _base(dep):
+        # Cumulative size of depots started before this one, as a fraction
+        # of the whole download. Equal slices when sizes are unknown.
+        if _total_size > 0:
+            done = sum(_sizes.get(str(d), 0) for d in _seen[:_seen.index(dep)])
+            return floor + (done / _total_size) * _span
+        return floor + (_seen.index(dep) / n) * _span
+
+    def _width(dep):
+        if _total_size > 0:
+            return (_sizes.get(str(dep), 0) / _total_size) * _span
+        return _span / n
 
     def _emit(status, pct):
         bridge.download_progress.emit(json.dumps({
@@ -994,13 +1029,12 @@ def _make_run_download_print_fn(bridge, app_id, game_name, selected_depots, floo
                 _seen.append(dep)
             _last_pct[0] = -1.0
             logger.debug("version-dl: depot %s started (%d/%d)", dep, len(_seen), n)
-            _emit(f"Downloading depot {dep}...", floor + (_seen.index(dep) / n) * _span)
+            _emit(f"Downloading depot {dep}...", _base(dep))
             return
         prog = _PROG_RE.match(clean)
         if prog and _seen:
             dep = _seen[-1]
             raw = float(prog.group(1))
-            base = floor + (_seen.index(dep) / n) * _span
             now = _t.monotonic()
             if raw < 99.5 and now - _last_emit[0] < 1.0:
                 return
@@ -1009,7 +1043,7 @@ def _make_run_download_print_fn(bridge, app_id, game_name, selected_depots, floo
             _emit(
                 f"Downloading depot {dep}... {_fmt_bytes(int(prog.group(2)))}"
                 f" / {_fmt_bytes(int(prog.group(3)))} ({_fmt_bytes(int(prog.group(4)))}/s)",
-                base + (raw / 100.0) * (_span / n),
+                _base(dep) + (raw / 100.0) * _width(dep),
             )
             return
         # DDMod (the backup engine) prints "NN% <file path>" per-depot lines
@@ -1019,7 +1053,6 @@ def _make_run_download_print_fn(bridge, app_id, game_name, selected_depots, floo
         if pct and _seen:
             dep = _seen[-1]
             raw = float(pct.group(1))
-            base = floor + (_seen.index(dep) / n) * _span
             now = _t.monotonic()
             if raw < 99.5 and now - _last_emit[0] < 1.0:
                 return
@@ -1027,7 +1060,7 @@ def _make_run_download_print_fn(bridge, app_id, game_name, selected_depots, floo
             _last_pct[0] = raw
             _emit(
                 f"Downloading depot {dep}... ({raw:.1f}%)",
-                base + (raw / 100.0) * (_span / n),
+                _base(dep) + (raw / 100.0) * _width(dep),
             )
             return
         logger.debug("build-downgrade: %s", clean)
@@ -1111,6 +1144,7 @@ def _bridge_download_game_version(bridge, app_id, manifest_override_json, source
                 lib_path=lib_override,
                 print_fn=_make_run_download_print_fn(
                     bridge, app_id, game_name, list(manifest_override.keys()),
+                    depot_sizes=_depot_sizes_for(app_id),
                 ),
                 build_id_override=str(build_id or ""),
             )
@@ -1609,7 +1643,8 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
                 _ok, _size = run_download(
                     _game_data, _selected, lib_dir, Path(steam_path),
                     print_fn=_make_run_download_print_fn(
-                        bridge, app_id, game_name, _selected
+                        bridge, app_id, game_name, _selected,
+                        depot_sizes=_depot_sizes_for(app_id),
                     ),
                     os_name=_target_os,
                 )
@@ -2177,10 +2212,11 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
             _last_emit = [0.0]  # monotonic of last download_progress emit
             _validating = [False]
 
-            # Each depot gets an equal slice of the 0-100 range so the bar
-            # climbs monotonically across all depots instead of hitting 100%
-            # at the end of every one and snapping back for the next.
-            # Reads selected_depots lazily: the OS filter reassigns it after
+            # Each depot gets a slice of the 0-100 range weighted by its
+            # size in bytes, so 100% means every depot is fully downloaded
+            # and a 3.6 GB depot doesn't count the same as a 50 MB one.
+            # Equal slices when sizes are unknown. Reads selected_depots and
+            # _depot_sizes lazily: the OS filter reassigns the former after
             # this closure is defined but before run_download emits anything.
             _span = _DDMOD_CEIL - _DDMOD_FLOOR
 
@@ -2191,7 +2227,15 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                     idx = order.index(str(depot_id))
                 except ValueError:
                     idx = 0
-                return _DDMOD_FLOOR + (idx / n) * _span + (raw_pct / 100.0) * (_span / n)
+                sizes = _depot_sizes
+                total = sum(sizes.get(str(d), 0) for d in order)
+                if total > 0:
+                    base = _DDMOD_FLOOR + (sum(sizes.get(str(d), 0) for d in order[:idx]) / total) * _span
+                    width = (sizes.get(str(depot_id), 0) / total) * _span
+                else:
+                    base = _DDMOD_FLOOR + (idx / n) * _span
+                    width = _span / n
+                return base + (raw_pct / 100.0) * width
 
             # Human label per depot id. App info rarely carries a depot
             # "name", but oslist/osarch are already in the cached app info,

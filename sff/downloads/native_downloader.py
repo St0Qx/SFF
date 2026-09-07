@@ -764,7 +764,10 @@ def download_depot(
             speed = _ema_speed[0]
             if _now - _prog_start[0] < 10.0 and _now > _prog_start[0]:
                 speed = b / (_now - _prog_start[0])
-            pct = (d / total) * 100 if total else 100.0
+            # Byte-based, not chunk-count: chunks vary in size, so a
+            # chunk-count percent drifted from the "X / Y bytes" shown next
+            # to it (17% of chunks while 9.9% of bytes).
+            pct = (b / pending_bytes) * 100 if pending_bytes else 100.0
             print_fn(
                 f"[PROG] {pct:.1f}% | {b}/{pending_bytes} bytes | {speed:.0f} B/s"
             )
