@@ -206,7 +206,7 @@ window.Downloads = (function() {
             if (it.status === 'downloading' || it.status === 'parked') {
                 if (item.state === 'downloading') {
                     it.status = item.paused ? 'parked' : 'downloading';
-                    if (!item.paused) it.pendingPause = false;
+                    it.pendingPause = false;
                 }
                 return;
             }
@@ -285,12 +285,14 @@ window.Downloads = (function() {
         var errHtml = (it.error && it.status === 'failed')
             ? ' <span style="font-size:11px;opacity:0.7;" title="' + Components.escapeHtml(it.error) + '">(error)</span>'
             : '';
+        var progressHtml = it.status === 'cancelled' ? '' :
+            '<div class="queue-pct" style="font-size:11px;opacity:0.6;">' + Math.round(it.progress || 0) + '%</div>' +
+            '<div class="queue-status" style="font-size:11px;opacity:0.7;"></div>';
         row.innerHTML =
             '<div class="download-info" style="flex:1;">' +
                 '<div class="download-name"><span class="download-name-text">' + Components.escapeHtml(it.name) + '</span>' +
                 ' <span class="queue-state-badge ' + b[1] + '">' + b[0] + '</span>' + sourceHtml + errHtml + '</div>' +
-                '<div class="queue-pct" style="font-size:11px;opacity:0.6;">' + Math.round(it.progress || 0) + '%</div>' +
-                '<div class="queue-status" style="font-size:11px;opacity:0.7;"></div>' +
+                progressHtml +
             '</div>' +
             '<div class="download-actions" style="display:flex;gap:6px;align-items:center;">' + _actionsHtml(it) + '</div>';
         _patchRow(row, it);
@@ -298,7 +300,8 @@ window.Downloads = (function() {
     }
 
     function _patchRow(el, it) {
-        el.style.setProperty('--dl-progress', Math.max(0, Math.min(100, it.progress || 0)) + '%');
+        var pctVal = it.status === 'cancelled' ? 0 : Math.max(0, Math.min(100, it.progress || 0));
+        el.style.setProperty('--dl-progress', pctVal + '%');
         var pct = el.querySelector('.queue-pct');
         if (pct) pct.textContent = Math.round(it.progress || 0) + '%';
         var stat = el.querySelector('.queue-status');

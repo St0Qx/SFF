@@ -186,9 +186,12 @@ def _bridge_download_game_with_source(bridge, app_id, source, request_update='0'
         bridge._emit_task_result("download_fastest", False, f"Invalid App ID: '{app_id}'")
         return
     def _do():
+        # Emit the row before any name lookup: get_game_name falls through
+        # to a blocking store API call on a cache miss, which kept the
+        # Active Downloads row from appearing until the first depot event.
         try:
-            from sff.network.http_utils import get_game_name
-            _name = get_game_name(app_id) or ""
+            from sff.game_list_fallback import get_app_name
+            _name = get_app_name(app_id) or ""
         except Exception:
             _name = ""
         bridge.download_progress.emit(json.dumps({
