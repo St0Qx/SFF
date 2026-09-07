@@ -285,7 +285,7 @@ window.Downloads = (function() {
         var errHtml = (it.error && it.status === 'failed')
             ? ' <span style="font-size:11px;opacity:0.7;" title="' + Components.escapeHtml(it.error) + '">(error)</span>'
             : '';
-        var progressHtml = it.status === 'cancelled' ? '' :
+        var progressHtml = (it.status === 'cancelled' || it.status === 'done') ? '' :
             '<div class="queue-pct" style="font-size:11px;opacity:0.6;">' + Math.round(it.progress || 0) + '%</div>' +
             '<div class="queue-status" style="font-size:11px;opacity:0.7;"></div>';
         row.innerHTML =
