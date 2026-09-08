@@ -547,7 +547,13 @@ def download_depot(
 
     # ── Pre-verify: SHA1-check existing chunks ───────────
     verified_sha: set[str] = set()
-    for sha, offset, cb_original, fpath in all_flat:
+    _verify_total = len(all_flat)
+    _last_verify_print = time.monotonic()
+    for i, (sha, offset, cb_original, fpath) in enumerate(all_flat):
+        now = time.monotonic()
+        if now - _last_verify_print >= 1.0:
+            print_fn(f"[native] Verifying {i}/{_verify_total} chunks")
+            _last_verify_print = now
         try:
             if not fpath.exists():
                 continue

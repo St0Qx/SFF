@@ -459,7 +459,7 @@ def run_download(
                 key_data = depots.get(depot_id_str, {})
                 key = key_data.get("key", "") if isinstance(key_data, dict) else ""
                 if not manifest_id or not key:
-                    print_fn(Fore.YELLOW + f"Depot {depot_id_str}: native needs manifest+key, deferring to DDMod" + Style.RESET_ALL)
+                    print_fn(Fore.YELLOW + f"Depot {depot_id_str}: native needs manifest+key, will download with DDMod" + Style.RESET_ALL)
                     native_failed.append(depot_id)
                     continue
                 print_fn(
@@ -482,7 +482,7 @@ def run_download(
                     if ok:
                         print_fn(Fore.GREEN + f"Depot {depot_id_str} downloaded ({size:,} bytes)" + Style.RESET_ALL)
                     else:
-                        print_fn(Fore.YELLOW + f"Depot {depot_id_str}: native download failed, deferring to DDMod" + Style.RESET_ALL)
+                        print_fn(Fore.YELLOW + f"Depot {depot_id_str}: native download failed, will download with DDMod" + Style.RESET_ALL)
                         native_failed.append(depot_id)
                 except Exception as e:
                     print_fn(Fore.RED + f"Native download failed for depot {depot_id_str}: {e}" + Style.RESET_ALL)

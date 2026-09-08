@@ -88,11 +88,14 @@ class SLSManager(AppInjectionManager):
     def add_ids(
         self, data: Union[int, list[int], LuaParsedInfo], skip_check: bool = False
     ):
-        from sff.linux.yaml_config import add_additional_app, add_dlc_data
+        from sff.linux.yaml_config import add_additional_app, add_app_token, add_dlc_data
         known_depot_ids: set[str] = set()
+        base_app_id = str(data.app_id) if isinstance(data, LuaParsedInfo) else None
         if isinstance(data, int):
             data = [data]
         elif isinstance(data, LuaParsedInfo):
+            for _tok_app_id, _tok_val in (data.token_overrides or {}).items():
+                add_app_token(self.sls_config_path, str(_tok_app_id), str(_tok_val))
             ids = [int(data.app_id)]
             # Also add DLC app IDs from the lua so they show in Steam properties
             try:
@@ -126,8 +129,8 @@ class SLSManager(AppInjectionManager):
             data = ids
         changes = 0
         for new_app_id in data:
-            # depots aren't real apps
-            if str(new_app_id) in known_depot_ids:
+            # depots aren't real apps, but the app itself always is
+            if str(new_app_id) in known_depot_ids and str(new_app_id) != base_app_id:
                 logger.debug("add_ids: skipping %s — known depot, not an app", new_app_id)
                 continue
             # Try to register DlcData for this ID if it's a DLC of a

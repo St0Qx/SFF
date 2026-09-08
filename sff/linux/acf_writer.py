@@ -68,8 +68,6 @@ def create_acf(
     installed_depots = {}
     for depot_id in selected_depots:
         depot_id_str = str(depot_id)
-        if depot_id_str == appid:
-            continue  # the base app ID is never itself a depot
         manifest_gid = manifests.get(depot_id_str, "")
         if manifest_gid:
             depot_info = depots.get(depot_id_str) or depots.get(int(depot_id_str) if depot_id_str.isdigit() else depot_id_str) or {}
@@ -114,7 +112,7 @@ def create_acf(
         "AllowOtherDownloadsWhileRunning": "0",
         "ScheduledAutoUpdate": "0",
         "DownloadType": "1",
-        "InstalledDepots": {},
+        "InstalledDepots": installed_depots,
         "UserConfig": {"language": "english"},
         "MountedConfig": {"language": "english"},
     }
