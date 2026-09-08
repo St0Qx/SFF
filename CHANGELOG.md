@@ -4,12 +4,12 @@
 
 ### Fixed
 
-- **Some games wouldn't find their own files** - some games use the same ID for the game and its only depot, which used to confuse SFF. It now checks Steam's own records to tell them apart correctly.
-- **Steam sometimes showed "nothing installed"** - after a Native or DDMod download finished successfully, Steam could still show the game as having nothing installed. Steam now correctly sees the install.
-- **Missing access tokens for some games** - an extra access token some games need was being read from the game file but never actually saved. It's now saved properly.
-- **Frozen-looking progress bar** - for games with a lot of files, the bar looked stuck while SFF checked which files were already downloaded, even though it was still working. It now shows real progress during that check.
-- **Removed the unreliable "pin this version" prompt** - downloading an older version still installs exactly that version; the prompt just wasn't working reliably.
-- **Wrong download source shown** - the Downloads list could show the wrong source for a game if it was already queued from a different one.
+- **Game files could go unrecognized** - some games use the same ID for the game itself and its only depot, which previously confused SFF. It now checks Steam's own records to distinguish them correctly.
+- **Steam sometimes reported "nothing installed"** - after a Native or DDMod download completed successfully, Steam could still report the game as not installed. Steam now correctly recognizes the completed install.
+- **Missing access tokens for some games** - an access token required by some games was being read but never actually saved. It is now saved correctly.
+- **Progress bar appeared frozen during file checks** - for games with a large number of files, the bar appeared stuck while SFF checked which files were already downloaded, even though the check was still running. It now shows real-time progress during this step.
+- **Removed the unreliable "pin this version" prompt** - downloading a specific older version still installs exactly that version; the prompt itself was not working reliably.
+- **Incorrect download source displayed** - the Downloads list could display the wrong source for a game if it was already queued under a different source.
 
 ## 6.6.7b
 
