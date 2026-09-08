@@ -4,12 +4,12 @@
 
 ### Fixed
 
-- **Game files could go unrecognized** - some games use the same ID for the game itself and its only depot, which previously confused SFF. It now checks Steam's own records to distinguish them correctly.
-- **Steam sometimes reported "nothing installed"** - after a Native or DDMod download completed successfully, Steam could still report the game as not installed. Steam now correctly recognizes the completed install.
-- **Missing access tokens for some games** - an access token required by some games was being read but never actually saved. It is now saved correctly.
-- **Progress bar appeared frozen during file checks** - for games with a large number of files, the bar appeared stuck while SFF checked which files were already downloaded, even though the check was still running. It now shows real-time progress during this step.
-- **Removed the unreliable "pin this version" prompt** - downloading a specific older version still installs exactly that version; the prompt itself was not working reliably.
-- **Incorrect download source displayed** - the Downloads list could display the wrong source for a game if it was already queued under a different source.
+- **Depot resolution confusion** - some games use the same ID for the game itself and one of its depots. This confused depot resolution and could stop the right files from being found or downloaded.
+- **Steam showed 0 installed after a successful download** - after a Native or DDMod download finished, Steam could still show the game's install size as 0 and prompt for an update, even though the download completed correctly.
+- **Access tokens not saved to SLSsteam's config** - access tokens listed in a game's lua weren't being saved to SLSsteam's config.yaml, even though they were read correctly.
+- **Frozen-looking progress during file checks** - the Downloads tab's progress bar looked frozen while SFF checked already-downloaded files — the log kept showing "Verifying X/Y chunks" the whole time, but nothing moved on screen. It now updates in real time.
+- **Removed the unreliable "pin this version" prompt** - shown after downloading an older version. The correct older version still installs either way.
+- **Wrong download source label** - the Downloads tab could show the wrong "via [source]" label for a game that was already queued from a different source.
 
 ## 6.6.7b
 
