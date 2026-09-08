@@ -860,6 +860,76 @@ def _bridge_get_game_platforms(bridge, app_id):
     return json.dumps(sorted(t for t in tags if t != "_unknown"))
 
 
+def _bridge_get_app_depots(bridge, app_id):
+    """JSON {name, depots: [...]} for the Advanced depot picker.
+    HTTP mirror only — never touches the Steam CM, so a GUI-thread call
+    can't hang on a CM login. Sorted ACCELA-style: OS priority
+    (windows, linux, all, other, macos), then language, then depot id."""
+    empty = json.dumps({"name": "", "depots": []})
+    try:
+        aid = int(app_id)
+    except (TypeError, ValueError):
+        return empty
+    try:
+        from sff.network.steam_client import create_provider_for_current_thread
+        info = create_provider_for_current_thread().get_app_info_http_only([aid]).get(aid) or {}
+    except Exception:
+        info = {}
+    depots = info.get("depots", {}) if isinstance(info, dict) else {}
+    common = info.get("common", {}) if isinstance(info, dict) else {}
+    app_name = str(common.get("name", "") or "").strip() if isinstance(common, dict) else ""
+    out = []
+    for depot_id, meta in depots.items():
+        if not str(depot_id).isdigit() or not isinstance(meta, dict):
+            continue
+        config = meta.get("config", {})
+        if not isinstance(config, dict):
+            config = {}
+        size = 0
+        manifests = meta.get("manifests", {})
+        if isinstance(manifests, dict):
+            for m in manifests.values():
+                if isinstance(m, dict):
+                    try:
+                        size = max(size, int(m.get("size") or 0))
+                    except (TypeError, ValueError):
+                        pass
+        if str(meta.get("depotfromapp", "") or "") == "228980":
+            continue  # Steamworks redist, not game content
+        out.append({
+            "id": str(depot_id),
+            "name": str(meta.get("name", "") or "").strip(),
+            "oslist": str(config.get("oslist", "") or "").strip(),
+            "language": str(config.get("language", "") or "").strip(),
+            "size": size,
+        })
+
+    def _prio(d):
+        os_str = d["oslist"].lower()
+        if os_str == "windows":
+            os_p = 1
+        elif os_str == "linux":
+            os_p = 2
+        elif "all" in os_str:
+            os_p = 3
+        elif os_str in ("macosx", "macos"):
+            os_p = 5
+        else:
+            os_p = 4
+        desc = d["name"].lower()
+        lang = d["language"].lower()
+        if "english" in desc or not lang:
+            lang_p, lang_key = 1, lang or "english"
+        elif "japanese" in desc:
+            lang_p, lang_key = 2, "japanese"
+        else:
+            lang_p, lang_key = 3, lang
+        return (os_p, lang_p, lang_key, int(d["id"]))
+
+    out.sort(key=_prio)
+    return json.dumps({"name": app_name, "depots": out})
+
+
 def _fetch_steam_image_urls(app_ids):
     """Batch-fetch canonical image URLs via Steam IStoreBrowseService/GetItems/v1.
 
@@ -1536,6 +1606,7 @@ def _bridge_update_store_lists(bridge):
     """Download all store data sources: all_games.txt + games.json + name cache.
     Emits task_finished('store_metadata_refresh')."""
     def _do():
+        global _STEAM_APPLIST_CACHE, _STEAM_APPLIST_CACHE_TIME
         from sff.game_list_fallback import ensure_loaded as _fallback_loaded
         from sff.core.utils import root_folder
         from sff.core.strings import STEAM_WEB_API_KEY as _DEFAULT_KEY
@@ -1545,7 +1616,29 @@ def _bridge_update_store_lists(bridge):
         ok_steam = False
         ok_json = False
         results = []
-        # 1) Download all_games.txt via IStoreService API
+        # 1) Force-refresh games.json + name cache (games_appid.json, software_appid.json)
+        try:
+            _fallback_loaded(force=True)
+            from sff.game_list_fallback import metadata_counts
+            counts = metadata_counts()
+            games_count = counts.get("games", 0)
+            names_count = counts.get("names", 0)
+            dlc_count = counts.get("dlc_names", 0)
+            ok_json = bool(games_count or names_count or dlc_count)
+            results.append(
+                f"games.json: {games_count} entries, app/software names: {names_count}, DLC names: {dlc_count}"
+            )
+            logger.debug(
+                "Store list update: JSON sources refreshed (%d games, %d names, %d DLC names)",
+                games_count, names_count, dlc_count,
+            )
+        except Exception as e:
+            logger.warning("Store list update: JSON sources failed: %s", e)
+            results.append(f"JSON sources failed: {e}")
+        # 2) Download all_games.txt via IStoreService API. Valve revokes the
+        #    bundled web key every few months; on 403 the GitHub mirrors
+        #    refreshed above carry the same list, so rebuild from those
+        #    instead of reporting a failure.
         try:
             all_games_file = root_folder(outside_internal=True) / "all_games.txt"
             api_key = get_setting(Settings.STEAM_WEB_API_KEY)
@@ -1583,28 +1676,20 @@ def _bridge_update_store_lists(bridge):
             logger.debug("Store list update: all_games.txt written (%d games)", len(games_str))
         except Exception as e:
             logger.warning("Store list update: all_games.txt failed: %s", e)
-            results.append(f"all_games.txt failed: {e}")
-        # 2) Force-refresh games.json + name cache (games_appid.json, software_appid.json)
-        try:
-            _fallback_loaded(force=True)
-            from sff.game_list_fallback import metadata_counts
-            counts = metadata_counts()
-            games_count = counts.get("games", 0)
-            names_count = counts.get("names", 0)
-            dlc_count = counts.get("dlc_names", 0)
-            ok_json = bool(games_count or names_count or dlc_count)
-            results.append(
-                f"games.json: {games_count} entries, app/software names: {names_count}, DLC names: {dlc_count}"
-            )
-            logger.debug(
-                "Store list update: JSON sources refreshed (%d games, %d names, %d DLC names)",
-                games_count, names_count, dlc_count,
-            )
-        except Exception as e:
-            logger.warning("Store list update: JSON sources failed: %s", e)
-            results.append(f"JSON sources failed: {e}")
-        # Also invalidate the Steam applist in-memory cache so next search re-reads
-        global _STEAM_APPLIST_CACHE, _STEAM_APPLIST_CACHE_TIME
+            try:
+                _STEAM_APPLIST_CACHE = None
+                _STEAM_APPLIST_CACHE_TIME = 0
+                apps = _load_steam_applist()
+            except Exception as _me:
+                apps = []
+                logger.debug("all_games.txt mirror rebuild failed: %s", _me)
+            if apps:
+                ok_steam = True
+                results.append(f"all_games.txt: {len(apps)} games (GitHub mirrors)")
+                logger.debug("Store list update: all_games.txt rebuilt from mirrors (%d apps)", len(apps))
+            else:
+                results.append(f"all_games.txt failed: {e}")
+        # Invalidate the Steam applist in-memory cache so next search re-reads
         _STEAM_APPLIST_CACHE = None
         _STEAM_APPLIST_CACHE_TIME = 0
         return (ok_steam or ok_json, "; ".join(results))

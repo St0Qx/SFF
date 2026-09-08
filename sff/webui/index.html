@@ -1651,16 +1651,18 @@ start YourGame-Shipping.exe</pre>
                     </div>
                 </div>
                 <div style="margin-top:8px; padding-left:4px;">
-                    <div style="font-size:11px; opacity:0.7; margin-bottom:4px;">Depot OS:</div>
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+                        <span style="font-size:11px; opacity:0.7;">Depot OS:</span>
+                        <a href="#" id="dl-depot-advanced" style="font-size:11px; color:var(--accent,#4a9eff); text-decoration:none;">Advanced</a>
+                    </div>
                     <select id="dl-target-os" style="display:none">
-                        <option value="auto">Auto</option>
                         <option value="windows">Windows</option>
                         <option value="linux">Linux</option>
                         <option value="all">All depots</option>
                     </select>
                     <div class="custom-select" id="dl-target-os-ui">
                         <div class="custom-select-display">
-                            <span class="custom-select-text">Auto</span>
+                            <span class="custom-select-text">Windows</span>
                             <span class="custom-select-arrow">&#9662;</span>
                         </div>
                         <div class="custom-select-dropdown hidden"></div>
@@ -1963,16 +1965,18 @@ start YourGame-Shipping.exe</pre>
                     </select>
                 </div>
                 <div style="margin-bottom:10px;">
-                    <div style="font-size:11px; opacity:0.7; margin-bottom:4px;">Depot OS:</div>
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+                        <span style="font-size:11px; opacity:0.7;">Depot OS:</span>
+                        <a href="#" id="ddmod-home-depot-advanced" style="font-size:11px; color:var(--accent,#4a9eff); text-decoration:none;">Advanced</a>
+                    </div>
                     <select id="ddmod-home-target-os" style="display:none">
-                        <option value="auto">Auto</option>
                         <option value="windows">Windows</option>
                         <option value="linux">Linux</option>
                         <option value="all">All depots</option>
                     </select>
                     <div class="custom-select" id="ddmod-home-target-os-ui">
                         <div class="custom-select-display">
-                            <span class="custom-select-text">Auto</span>
+                            <span class="custom-select-text">Windows</span>
                             <span class="custom-select-arrow">&#9662;</span>
                         </div>
                         <div class="custom-select-dropdown hidden"></div>
@@ -1990,6 +1994,32 @@ start YourGame-Shipping.exe</pre>
             </div>
             <div class="modal-footer">
                 <button id="ddmod-home-download" class="btn btn-primary">Download via DDMod</button>
+                <button class="btn modal-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Advanced Depot Picker Modal -->
+    <div id="depot-picker-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h2 id="depot-picker-title">Select Depots</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="depot-picker-loading" class="loading-spinner">Loading depots...</div>
+                <div id="depot-picker-empty" class="hidden" style="font-size:12px;opacity:0.7;padding:8px 0;">Steam has no depot list for this App ID.</div>
+                <div class="data-table hidden" id="depot-picker-table" style="max-height:340px;overflow-y:auto;">
+                    <table>
+                        <thead><tr><th style="width:36px;"></th><th>Depot</th><th style="width:110px;">OS</th><th style="width:86px;">Size</th></tr></thead>
+                        <tbody id="depot-picker-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer" style="display:flex;align-items:center;">
+                <button id="depot-picker-steamdb" class="btn" style="margin-right:auto;color:var(--accent,#4a9eff);border-color:var(--accent,#4a9eff);">Open SteamDB</button>
+                <button id="depot-picker-ok" class="btn btn-primary" disabled>OK</button>
                 <button class="btn modal-cancel">Cancel</button>
             </div>
         </div>

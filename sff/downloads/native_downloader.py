@@ -624,6 +624,10 @@ def download_depot(
     done_lock = threading.Lock()
     total_done = [0]
     total_bytes = [0]
+    # Compressed bytes actually pulled from the CDN. total_bytes counts
+    # decompressed writes (correct for progress vs manifest size) but is
+    # ~2-4x the wire rate on zstd chunks, so speed must use this instead.
+    wire_bytes = [0]
     fatal_error = [None]
     _stop = threading.Event()
 
@@ -720,6 +724,7 @@ def download_depot(
         with done_lock:
             total_bytes[0] += n
             total_done[0] += 1
+            wire_bytes[0] += len(chunk_data)
         return n
 
     # ── Concurrent chunk download ─────────────────────────
@@ -758,18 +763,19 @@ def download_depot(
                 _prog_start[0] = _now
             with done_lock:
                 b = total_bytes[0]
+                w = wire_bytes[0]
                 d = total_done[0]
             if _last_prog_t[0] and dt > 0:
-                inst = max(b - _last_prog_b[0], 0) / dt
+                inst = max(w - _last_prog_w[0], 0) / dt
                 _ema_speed[0] = _ema_speed[0] * 0.6 + inst * 0.4 if _ema_speed[0] else inst
-            _last_prog_b[0] = b
+            _last_prog_w[0] = w
             _last_prog_t[0] = _now
             # First 10s: 32 connections all filling their TCP windows at once
             # makes the instantaneous rate read ~3x the real line speed (the
             # burst lasts ~200 MB). Report the honest average until it drains.
             speed = _ema_speed[0]
             if _now - _prog_start[0] < 10.0 and _now > _prog_start[0]:
-                speed = b / (_now - _prog_start[0])
+                speed = w / (_now - _prog_start[0])
             # Byte-based, not chunk-count: chunks vary in size, so a
             # chunk-count percent drifted from the "X / Y bytes" shown next
             # to it (17% of chunks while 9.9% of bytes).
@@ -778,7 +784,7 @@ def download_depot(
                 f"[PROG] {pct:.1f}% | {b}/{pending_bytes} bytes | {speed:.0f} B/s"
             )
 
-        _last_prog_b = [0]
+        _last_prog_w = [0]
         _hb_stop = threading.Event()
 
         def _heartbeat():

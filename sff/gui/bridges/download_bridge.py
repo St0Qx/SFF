@@ -1719,7 +1719,7 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
 
 # ── DDMod download ────────────────────────────────────────────────────
 
-def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folder='', target_os='', branch='', file_type=''):
+def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folder='', target_os='', branch='', file_type='', custom_depots=''):
     """Download a game using DepotDownloaderMod.
     source: 'hubcap' | 'oureveryday' | 'ryuu' | 'local'
     lua_path: used when source == 'local'
@@ -2451,15 +2451,35 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                 _last_emit[0] = now
                 print(clean)
 
-            _target_os = (target_os or "").strip().lower()
-            if _target_os not in ("windows", "linux", "macos", "all"):
-                _target_os = "linux" if sys.platform.startswith("linux") else "windows"
-            # Proton fallback: no Linux depot -> Windows depots + Windows
-            # file filter. Resolved once so depot selection and run_download
-            # agree.
-            from sff.downloads.depot_downloader import resolve_target_os
-            _target_os = resolve_target_os(selected_depots, _app_info, _target_os, print_fn=_print_fn)
-            selected_depots = filter_depots_by_os(selected_depots, _app_info, print_fn=_print_fn, os_name=_target_os)
+            _custom = None
+            if custom_depots:
+                try:
+                    _custom = [str(d) for d in json.loads(custom_depots) if str(d).isdigit()]
+                except Exception:
+                    _custom = None
+            if _custom is not None:
+                # Advanced picker: the user named the depots; download them
+                # verbatim, no OS filtering at depot or file level. Only
+                # depots the lua actually carries are kept.
+                _avail = set(str(d) for d in depots_dict)
+                _unknown = [d for d in _custom if d not in _avail]
+                if _unknown:
+                    _print_fn("Skipping unknown depot(s): " + ", ".join(_unknown))
+                _custom = [d for d in _custom if d in _avail]
+                if not _custom:
+                    return (False, "The lua has none of the selected depots.")
+                _target_os = "all"
+                selected_depots = _custom
+            else:
+                _target_os = (target_os or "").strip().lower()
+                if _target_os not in ("windows", "linux", "macos", "all"):
+                    _target_os = "linux" if sys.platform.startswith("linux") else "windows"
+                # Proton fallback: no Linux depot -> Windows depots + Windows
+                # file filter. Resolved once so depot selection and run_download
+                # agree.
+                from sff.downloads.depot_downloader import resolve_target_os
+                _target_os = resolve_target_os(selected_depots, _app_info, _target_os, print_fn=_print_fn)
+                selected_depots = filter_depots_by_os(selected_depots, _app_info, print_fn=_print_fn, os_name=_target_os)
             for _sk in [k for k in list(depots_dict.keys()) if k not in selected_depots]:
                 del depots_dict[_sk]
 

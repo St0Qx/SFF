@@ -764,12 +764,23 @@ def browse_games_json(offset=0, per_page=20, sort_by="updated", block_nsfw=False
     def id_key(item):
         return item[0]
 
+    def _updated_ts(info):
+        # games.json from upstream lost updated_date; last_modified (epoch
+        # seconds, Steam's own change stamp) is the only live signal.
+        ud = info.get("updated_date") or ""
+        if ud:
+            try:
+                from datetime import datetime
+                return datetime.fromisoformat(str(ud).replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                pass
+        try:
+            return float(info.get("last_modified") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
     def updated_key(item):
-        info = item[2]
-        return (
-            str(info.get("updated_date") or info.get("release_date") or ""),
-            item[0],
-        )
+        return (_updated_ts(item[2]), item[0])
 
     items = eligible_items()
     if sort_mode == "popular":
@@ -793,12 +804,16 @@ def browse_games_json(offset=0, per_page=20, sort_by="updated", block_nsfw=False
         selected = heapq.nlargest(window, items, key=updated_key)
 
     page = selected[int(offset or 0):int(offset or 0) + int(per_page or 20)]
+    from datetime import datetime, timezone
     games = []
     for appid, name, info in page:
+        ts = _updated_ts(info)
         games.append({
             "app_id": appid,
             "name": name,
-            "last_updated": info.get("updated_date", ""),
+            "last_updated": (
+                datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else ""
+            ),
             "status": "",
             "size": 0,
             "image_url": info.get("header_image", ""),

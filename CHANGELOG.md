@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### New
+
+- **Advanced depot picker** - an Advanced link next to Depot OS in the download dialogs opens a "Select Depots" list of the game's depots with checkboxes, OS and size columns, and an Open SteamDB link for reference. Picking depots adds a Custom option to Depot OS and the native download fetches exactly those depots, with no OS filtering.
+- **Relative update dates** - Store cards show "Updated: 3 hours ago" instead of a raw timestamp, with the exact date in the hover tooltip. The label hides when sorting by update date, where it duplicates the sort order.
+
+### Fixed
+
+- **Depot OS default** - Auto is gone; the select now defaults to your running OS when the game has depots for it, so what you see is what downloads.
+- **Download speed counter** - the native downloader reported decompressed bytes written to disk, so on compressed depots the "MB/s" line read 2-4x your real line speed. It now measures bytes actually pulled from the CDN.
+- **Crack Files on Windows** - applying a community fix could report "Game install folder not found" even when the game was installed, if the main Steam folder wasn't listed in libraryfolders.vdf. The install folder lookup now checks the Steam root like the downgrade flow does.
+- **macOS label** - depot OSes now display as "macOS" instead of "Macosx".
+- **Recently Updated showed stale dates** - the Store's update dates froze around mid-June because the upstream games.json dropped the field they read. Dates now come from Steam's own last-modified stamp, so Recently Updated shows games actually updated this week.
+- **all_games.txt refresh failed with 403** - when Steam rejects the bundled web API key, the Store list update now falls back to the GitHub mirrors instead of reporting an error, so the game list keeps refreshing.
+
 ## 6.6.7b
 
 ### New

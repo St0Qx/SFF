@@ -222,23 +222,16 @@ window.Library = (function() {
                             try {
                                 var d2 = JSON.parse(json2 || '{}');
                                 if (d2.error || !d2.total) { el.textContent = ''; return; }
-                                el.textContent = _fmtBytes(d2.free) + ' free of ' + _fmtBytes(d2.total);
+                                el.textContent = Components.fmtBytes(d2.free) + ' free of ' + Components.fmtBytes(d2.total);
                             } catch(e2) {}
                         });
                     }, 1200);
                     el.textContent = '';
                     return;
                 }
-                el.textContent = _fmtBytes(d.free) + ' free of ' + _fmtBytes(d.total);
+                el.textContent = Components.fmtBytes(d.free) + ' free of ' + Components.fmtBytes(d.total);
             } catch(e) {}
         });
-    }
-
-    function _fmtBytes(b) {
-        if (b >= 1e12) return (b / 1e12).toFixed(1) + ' TB';
-        if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
-        if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
-        return (b / 1e3).toFixed(0) + ' KB';
     }
 
     function _refreshLibrary(force) {

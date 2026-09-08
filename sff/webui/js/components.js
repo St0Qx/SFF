@@ -104,6 +104,19 @@ window.Components = (function() {
         return STEAM_CDN_LIBRARY.replace('{appid}', appId);
     }
 
+    function _relativeTime(iso) {
+        var then = Date.parse(iso);
+        if (isNaN(then)) return null;
+        var secs = Math.floor((Date.now() - then) / 1000);
+        if (secs < 0) secs = 0;
+        var units = [[31536000, 'year'], [2592000, 'month'], [86400, 'day'], [3600, 'hour'], [60, 'minute']];
+        for (var i = 0; i < units.length; i++) {
+            var n = Math.floor(secs / units[i][0]);
+            if (n >= 1) return n + ' ' + units[i][1] + (n > 1 ? 's' : '') + ' ago';
+        }
+        return secs + ' second' + (secs !== 1 ? 's' : '') + ' ago';
+    }
+
     // Create a game card element (grid view)
     function createGameCard(game, options) {
         options = options || {};
@@ -122,7 +135,12 @@ window.Components = (function() {
             badgesHtml += '<span class="badge badge-nsfw">NSFW</span>';
         }
 
-        var lastUpdated = game.last_updated ? '<div class="game-card-meta">Updated: ' + game.last_updated + '</div>' : '';
+        var lastUpdated = '';
+        if (game.last_updated) {
+            var rel = _relativeTime(game.last_updated) || game.last_updated;
+            lastUpdated = '<div class="game-card-meta" title="' + escapeHtml(game.last_updated) + '">Updated: ' + escapeHtml(rel) + '</div>';
+        }
+        if (options && options.showUpdated === false) lastUpdated = '';
         var drmBadge = game.drm ? '<span class="badge badge-drm">DRM</span>' : '';
 
         card.setAttribute('role', 'listitem');
@@ -571,18 +589,27 @@ window.Components = (function() {
                 return { v: o.value, t: o.textContent };
             });
         }
+        // A stale select value (the initial "Windows") must not override the
+        // default-to-running-OS pick; only a click in the dropdown counts.
+        if (!sel._pickHooked) {
+            sel._pickHooked = true;
+            sel._userChose = false;
+            sel.addEventListener('change', function(e) {
+                if (!e._programmatic) sel._userChose = true;
+            });
+        }
         var allOs = sel._allOptions.map(function(o) { return o.v; })
-            .filter(function(v) { return v && v !== 'auto' && v !== 'all'; });
+            .filter(function(v) { return v && v !== 'all'; });
         Bridge.callWithCallback('get_game_platforms', appId || '', function(json) {
             var plats;
             try { plats = JSON.parse(json || '[]'); } catch (e) { plats = []; }
             if (!plats.length) plats = allOs;
             var wanted = {};
             plats.forEach(function(p) { wanted[p] = true; });
-            var prev = sel.value;
+            var prev = sel._userChose ? sel.value : '';
             sel.innerHTML = '';
             if (plats.length === 1) {
-                // Single OS available — no point offering Auto or All depots
+                // Single OS available — no point offering All depots
                 var only = sel._allOptions.filter(function(o) { return o.v === plats[0]; })[0];
                 var opt = document.createElement('option');
                 opt.value = only.v;
@@ -590,17 +617,40 @@ window.Components = (function() {
                 sel.appendChild(opt);
             } else {
                 sel._allOptions.forEach(function(o) {
-                    if (o.v && o.v !== 'auto' && o.v !== 'all' && !wanted[o.v]) return;
+                    if (o.v && o.v !== 'all' && !wanted[o.v]) return;
                     var opt = document.createElement('option');
                     opt.value = o.v;
                     opt.textContent = o.t;
                     sel.appendChild(opt);
                 });
             }
+            var customIds = (window._depotCustomHook || function() { return null; })(selectId, appId);
+            if (customIds && customIds.length) {
+                var co = document.createElement('option');
+                co.value = 'custom';
+                co.textContent = 'Custom (' + customIds.length + ')';
+                sel.appendChild(co);
+            }
             sel.value = prev;
-            if (!sel.value) sel.value = sel.options[0].value;
-            sel.dispatchEvent(new Event('change', { bubbles: true }));
+            if (!sel.value) {
+                // Default to the running OS when the game offers it
+                var cur = (window.App && App.getPlatform()) === 'linux' ? 'linux' : 'windows';
+                var hasCur = Array.prototype.some.call(sel.options, function(o) {
+                    return o.value === cur;
+                });
+                sel.value = hasCur ? cur : sel.options[0].value;
+            }
+            var ev = new Event('change', { bubbles: true });
+            ev._programmatic = true;
+            sel.dispatchEvent(ev);
         });
+    }
+
+    function fmtBytes(b) {
+        if (b >= 1e12) return (b / 1e12).toFixed(1) + ' TB';
+        if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+        if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
+        return (b / 1e3).toFixed(0) + ' KB';
     }
 
     function setHideImages(val) {
@@ -649,6 +699,7 @@ window.Components = (function() {
         showLibraryModal: showLibraryModal,
         showConfirm: showConfirm,
         escapeHtml: escapeHtml,
+        fmtBytes: fmtBytes,
         initModals: initModals,
         CustomSelect: CustomSelect,
         populateDepotOsOptions: _populateDepotOsOptions,

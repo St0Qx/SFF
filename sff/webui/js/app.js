@@ -64,6 +64,7 @@ window.App = (function() {
         new Components.CustomSelect('setting-language', 'setting-language-ui');
         new Components.CustomSelect('dl-target-os', 'dl-target-os-ui');
         new Components.CustomSelect('ddmod-home-target-os', 'ddmod-home-target-os-ui');
+        _initDepotAdvanced();
         new Components.CustomSelect('library-drive-select', 'library-drive-select-ui');
         new Components.CustomSelect('setting-depotbox-rate-limit', 'setting-depotbox-rate-limit-ui');
         new Components.CustomSelect('downgrade-game-select', 'downgrade-game-select-ui');
@@ -1564,6 +1565,111 @@ window.App = (function() {
         });
     }
 
+    // Advanced depot picker: user-curated depot lists keyed by select id,
+    // shared between the store download modal and the home DDMod modal.
+    var _depotCustomPicks = {};
+
+    function _initDepotAdvanced() {
+        var pickerSel = '', pickerAppId = '';
+
+        var _osNames = { windows: 'Windows', linux: 'Linux', macos: 'macOS', macosx: 'macOS', 'mac': 'macOS' };
+        function _rowHtml(d, gameName) {
+            var esc = Components.escapeHtml;
+            var os = (d.oslist || '').split(/[\s,]+/).filter(Boolean)
+                .map(function(s) {
+                    var k = s.toLowerCase();
+                    return _osNames[k] || k.charAt(0).toUpperCase() + k.slice(1);
+                })
+                .join(', ');
+            var label = d.name || (gameName ? gameName + (os ? ' - ' + os : '') : 'Depot ' + d.id);
+            var size = d.size ? Components.fmtBytes(d.size) : '&mdash;';
+            return '<tr>' +
+                '<td><input type="checkbox" class="depot-pick" value="' + esc(d.id) + '"></td>' +
+                '<td>' + esc(label) + '</td>' +
+                '<td style="width:110px;">' + (esc(os) || '&mdash;') + '</td>' +
+                '<td style="width:86px;text-align:right;">' + size + '</td></tr>';
+        }
+
+        function open(selectId, appId, gameName) {
+            if (!appId) {
+                Components.showToast('warning', 'No App ID. Select a game first.');
+                return;
+            }
+            pickerSel = selectId; pickerAppId = appId;
+            var title = document.getElementById('depot-picker-title');
+            if (title) title.textContent = 'Select Depots for ' + (gameName || ('App ' + appId));
+            var loading = document.getElementById('depot-picker-loading');
+            var empty = document.getElementById('depot-picker-empty');
+            var table = document.getElementById('depot-picker-table');
+            var ok = document.getElementById('depot-picker-ok');
+            loading.classList.remove('hidden');
+            empty.classList.add('hidden');
+            table.classList.add('hidden');
+            ok.disabled = true;
+            Bridge.callWithCallback('get_app_depots', appId, function(json) {
+                loading.classList.add('hidden');
+                var data;
+                try { data = JSON.parse(json || '{}'); } catch(e) { data = {}; }
+                var depots = data.depots || [];
+                if (!depots.length) { empty.classList.remove('hidden'); return; }
+                var resolvedName = data.name || gameName || '';
+                var picked = _depotCustomPicks[String(appId)] || [];
+                var tbody = document.getElementById('depot-picker-tbody');
+                tbody.innerHTML = depots.map(function(d) { return _rowHtml(d, resolvedName); }).join('');
+                document.querySelectorAll('#depot-picker-tbody .depot-pick').forEach(function(cb) {
+                    cb.checked = picked.indexOf(cb.value) !== -1;
+                });
+                table.classList.remove('hidden');
+                ok.disabled = false;
+            });
+            Components.showModal('depot-picker-modal');
+        }
+
+        document.getElementById('dl-depot-advanced').addEventListener('click', function(e) {
+            e.preventDefault();
+            var appId = (document.getElementById('dl-ddmod') || {}).dataset.appid || '';
+            var nameEl = document.getElementById('download-modal-title');
+            var name = nameEl ? nameEl.textContent.replace(/^Download:\s*/, '').replace(/\s*\(\d+\)\s*$/, '') : '';
+            open('dl-target-os', appId, name);
+        });
+        document.getElementById('ddmod-home-depot-advanced').addEventListener('click', function(e) {
+            e.preventDefault();
+            open('ddmod-home-target-os', (document.getElementById('ddmod-home-appid') || {}).value || '', '');
+        });
+        document.getElementById('depot-picker-ok').addEventListener('click', function() {
+            var ids = Array.prototype.map.call(
+                document.querySelectorAll('.depot-pick:checked'),
+                function(cb) { return cb.value; });
+            if (!ids.length) {
+                Components.showToast('warning', 'Tick at least one depot.');
+                return;
+            }
+            _depotCustomPicks[String(pickerAppId)] = ids;
+            var sel = document.getElementById(pickerSel);
+            var opt = Array.prototype.filter.call(sel.options, function(o) {
+                return o.value === 'custom';
+            })[0];
+            if (!opt) {
+                opt = document.createElement('option');
+                opt.value = 'custom';
+                sel.appendChild(opt);
+            }
+            opt.textContent = 'Custom (' + ids.length + ')';
+            sel.value = 'custom';
+            sel.dispatchEvent(new Event('input'));
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+            Components.hideModal('depot-picker-modal');
+        });
+        document.getElementById('depot-picker-steamdb').addEventListener('click', function() {
+            if (pickerAppId) Bridge.call('open_url', 'https://steamdb.info/app/' + pickerAppId + '/depots/');
+        });
+
+        // Lets _populateDepotOsOptions re-add the Custom row on rebuild.
+        window._depotCustomHook = function(selectId, appId) {
+            return _depotCustomPicks[String(appId)] || null;
+        };
+    }
+
     function _startDdmodDownload(appId, source, luaPath, manifestFolder, targetOs, destinationPath) {
         var dest = (destinationPath || '').trim();
         if (!dest) {
@@ -1573,7 +1679,9 @@ window.App = (function() {
         Bridge.call('set_active_library', dest);
         Components.showToast('info', 'Starting native download for App ' + appId + '...');
         if (window.Downloads) Downloads.setSource(appId, source);
-        Bridge.call('download_game_ddmod', appId, source, luaPath || '', manifestFolder || '', targetOs || '');
+        var customJson = targetOs === 'custom'
+            ? JSON.stringify(_depotCustomPicks[String(appId)] || []) : '';
+        Bridge.call('download_game_ddmod', appId, source, luaPath || '', manifestFolder || '', targetOs || '', '', '', customJson);
     }
 
     function _openSteamHomeModal(appId, gameName) {

@@ -449,7 +449,7 @@ window.Store = (function() {
         }
         if (!grid || grid.children.length) return;
         _lastGames.forEach(function(game, index) {
-            fragment.appendChild(Components.createGameCard(game, { index: index }));
+            fragment.appendChild(Components.createGameCard(game, { index: index, showUpdated: _sortBy === 'updated' }));
         });
         grid.appendChild(fragment);
         _applySelectionState();

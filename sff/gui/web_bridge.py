@@ -196,6 +196,7 @@ from sff.gui.bridges.misc_bridge import (
 from sff.gui.bridges.store_bridge import (
     _bridge_connect_store,
     _bridge_get_cover_urls,
+    _bridge_get_app_depots,
     _bridge_get_game_platforms,
     _bridge_refresh_store_metadata,
     _bridge_search_games,
@@ -887,6 +888,9 @@ class WebBridge(QObject):
     @pyqtSlot(str, result=str)
     def get_game_platforms(self, app_id):
         return _bridge_get_game_platforms(self, app_id)
+    @pyqtSlot(str, result=str)
+    def get_app_depots(self, app_id):
+        return _bridge_get_app_depots(self, app_id)
     @pyqtSlot(str, result=str)
     def get_cover_urls(self, app_ids_json):
         return _bridge_get_cover_urls(self, app_ids_json)
@@ -2025,6 +2029,10 @@ class WebBridge(QObject):
             from sff.core.storage.vdf import get_steam_libs, vdf_load
             steam_path = self._steam_path
             libs = get_steam_libs(steam_path) if steam_path else []
+            # Mirror _find_app_manifest_acf: the main steamapps dir isn't
+            # always listed in libraryfolders.vdf.
+            if steam_path and _Path(steam_path) not in libs:
+                libs = list(libs) + [_Path(steam_path)]
             for lib in libs:
                 acf = lib / "steamapps" / f"appmanifest_{app_id}.acf"
                 if not acf.is_file():
@@ -2378,8 +2386,9 @@ class WebBridge(QObject):
         return _bridge_get_recent_lua_files(self)
     @pyqtSlot(str, str, str, str, str)
     @pyqtSlot(str, str, str, str, str, str, str)
-    def download_game_ddmod(self, app_id, source, lua_path, manifest_folder='', target_os='', branch='', file_type=''):
-        return _bridge_download_game_ddmod(self, app_id, source, lua_path, manifest_folder, target_os, branch, file_type)
+    @pyqtSlot(str, str, str, str, str, str, str, str)
+    def download_game_ddmod(self, app_id, source, lua_path, manifest_folder='', target_os='', branch='', file_type='', custom_depots=''):
+        return _bridge_download_game_ddmod(self, app_id, source, lua_path, manifest_folder, target_os, branch, file_type, custom_depots)
     @pyqtSlot(str, str, str)
     def import_local_lua(self, app_id, lua_path, manifest_folder=''):
         return _bridge_import_local_lua(self, app_id, lua_path, manifest_folder)
