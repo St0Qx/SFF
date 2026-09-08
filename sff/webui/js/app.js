@@ -1572,6 +1572,7 @@ window.App = (function() {
         }
         Bridge.call('set_active_library', dest);
         Components.showToast('info', 'Starting native download for App ' + appId + '...');
+        if (window.Downloads) Downloads.setSource(appId, source);
         Bridge.call('download_game_ddmod', appId, source, luaPath || '', manifestFolder || '', targetOs || '');
     }
 
@@ -1747,6 +1748,7 @@ window.App = (function() {
         Components.showToast('info', 'Starting download for App ' + appId + '...');
         if (mode === 'fastest') {
             var src = source || 'hubcap';
+            if (window.Downloads) Downloads.setSource(appId, src);
             Bridge.call('download_game_with_source', appId, src, requestUpdate || '0');
         }
     }

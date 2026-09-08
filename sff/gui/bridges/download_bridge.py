@@ -52,6 +52,10 @@ _DDMOD_PCT_FILE_RE = re.compile(r"^\s*(\d{1,3}(?:\.\d+)?)%\s+(.*)$")
 _PROG_RE = re.compile(
     r"^\[PROG\]\s+(\d{1,3}(?:\.\d+)?)%\s+\|\s+(\d+)/(\d+)\s+bytes\s+\|\s+(\d+)\s+B/s"
 )
+# depot_downloader's pre-alloc/validate summary lines (no byte/percent figure).
+_CHECK_HEARTBEAT_RE = re.compile(r"^\[(Pre-allocat|Validat)")
+# native_downloader's pre-verify pass: "[native] Verifying 1500/180606 chunks"
+_VERIFY_RE = re.compile(r"^\[native\] Verifying (\d+)/(\d+) chunks")
 
 
 def _fmt_bytes(n: float) -> str:
@@ -1031,6 +1035,21 @@ def _make_run_download_print_fn(bridge, app_id, game_name, selected_depots,
             logger.debug("version-dl: depot %s started (%d/%d)", dep, len(_seen), n)
             _emit(f"Downloading depot {dep}...", _base(dep))
             return
+        vf = _VERIFY_RE.match(clean)
+        if vf and _seen:
+            dep = _seen[-1]
+            done, total = int(vf.group(1)), int(vf.group(2))
+            raw = (done / total * 100.0) if total else 0.0
+            now = _t.monotonic()
+            if raw < 99.5 and now - _last_emit[0] < 1.0:
+                return
+            _last_emit[0] = now
+            _last_pct[0] = raw
+            _emit(
+                f"Depot {dep}: verifying existing files... {done}/{total}",
+                _base(dep) + (raw / 100.0) * _width(dep),
+            )
+            return
         prog = _PROG_RE.match(clean)
         if prog and _seen:
             dep = _seen[-1]
@@ -1062,6 +1081,13 @@ def _make_run_download_print_fn(bridge, app_id, game_name, selected_depots,
                 f"Downloading depot {dep}... ({raw:.1f}%)",
                 _base(dep) + (raw / 100.0) * _width(dep),
             )
+            return
+        # Pre-alloc/validate has no byte/percent figure, just refresh the status text.
+        chk = _CHECK_HEARTBEAT_RE.match(clean)
+        if chk and _seen:
+            dep = _seen[-1]
+            pct_here = _last_pct[0] if _last_pct[0] >= 0 else 0.0
+            _emit(f"Depot {dep}: {clean}", _base(dep) + (pct_here / 100.0) * _width(dep))
             return
         logger.debug("build-downgrade: %s", clean)
     return _print_fn
@@ -2045,6 +2071,12 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                             )
                         except Exception:
                             buildid = "0"
+                        # Drop the appid only if Steam confirms it's not a real depot.
+                        from sff.core.utils import enter_path
+                        if str(app_id) in depots_dict and not enter_path(_app_info, "depots", str(app_id)):
+                            depots_dict.pop(str(app_id), None)
+                            manifests_dict.pop(str(app_id), None)
+                            _depot_ids_set.discard(str(app_id))
                 except Exception as _me:
                     logger.debug("Manifest auto-resolve (Steam provider) failed: %s", _me)
 
@@ -2399,6 +2431,20 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                                 }))
                             except Exception:
                                 pass
+
+                # Native prep has no percent yet, just refresh the status text.
+                if clean.startswith("[native]"):
+                    _lbl = _depot_label(_cur_depot[0]) if _cur_depot[0] else "depot"
+                    try:
+                        bridge.download_progress.emit(json.dumps({
+                            "app_id": app_id,
+                            "name": game_name or f"App {app_id}",
+                            "status": f"{_lbl}: {clean[len('[native] '):]}",
+                            "progress": int(_last_pct[0]) if _last_pct[0] >= 0 else 0,
+                        }))
+                    except Exception:
+                        pass
+                    return
 
                 if not clean.startswith(_PASS_PREFIXES) and now - _last_emit[0] < 0.2:
                     return

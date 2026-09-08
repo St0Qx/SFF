@@ -21,7 +21,7 @@ window.Downloads = (function() {
         var id = String(appid);
         if (!_items[id]) {
             _items[id] = {
-                app_id: id, qid: null, name: 'App ' + id, source: '',
+                app_id: id, qid: null, name: 'App ' + id, source: '', sourceLocked: false,
                 status: 'queued', progress: 0, statusText: '',
                 error: '', timestamp: Date.now(),
                 pendingPause: false, cancelling: false
@@ -199,7 +199,7 @@ window.Downloads = (function() {
             var it = _get(id);
             it.qid = item.id;
             if (item.name) it.name = item.name;
-            if (item.source) it.source = item.source;
+            if (item.source && !it.sourceLocked) it.source = item.source;
             if (item.error) it.error = item.error;
             // Engine still winding down after a pause/cancel request: the
             // row stays in Active until task_finished reports back.
@@ -365,8 +365,16 @@ window.Downloads = (function() {
         if (resumeBtn) resumeBtn.disabled = !(_queueState && _queueState.paused);
     }
 
+    function setSource(appid, source) {
+        var it = _get(appid);
+        it.source = source || '';
+        it.sourceLocked = true;
+        _render();
+    }
+
     return {
         init: init,
-        onPageEnter: onPageEnter
+        onPageEnter: onPageEnter,
+        setSource: setSource
     };
 })();
