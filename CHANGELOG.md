@@ -4,12 +4,12 @@
 
 ### Fixed
 
-- **Depot/appid confusion** - some games use their own app ID as their only depot ID (e.g. Half-Life: Blue Shift), so ID equality alone couldn't tell a real depot from a lua's base-app marker line. Manifest resolution now checks Steam's real depot list instead of guessing.
-- **InstalledDepots not written** - native/DDMod downloads showed 0 installed depots to Steam regardless of what was actually downloaded, since the ACF writer computed the depot list correctly but never wrote it in.
-- **Ignored addtoken()** - token entries from a lua were parsed but never used. Now written into SLSsteam's AppTokens.
-- **Frozen verify progress** - the native downloader's file-verification pass (100k+ chunks on larger depots) showed no progress at all, so the bar looked frozen while checking existing files. Same for DDMod's pre-allocate/validate phases.
-- **Version pinning removed** - dropped the "pin this version" prompt and manifest pinning for older-version downloads. The Steam Native path still correctly stamps the selected older build into the ACF instead of the live one.
-- **Wrong source label** - Active Downloads could show the wrong provider if an unrelated queued entry for the same app existed.
+- **Some games wouldn't find their own files** - some games use the same ID for the game and its only depot, which used to confuse SFF. It now checks Steam's own records to tell them apart correctly.
+- **Steam sometimes showed "nothing installed"** - after a Native or DDMod download finished successfully, Steam could still show the game as having nothing installed. Steam now correctly sees the install.
+- **Missing access tokens for some games** - an extra access token some games need was being read from the game file but never actually saved. It's now saved properly.
+- **Frozen-looking progress bar** - for games with a lot of files, the bar looked stuck while SFF checked which files were already downloaded, even though it was still working. It now shows real progress during that check.
+- **Removed the unreliable "pin this version" prompt** - downloading an older version still installs exactly that version; the prompt just wasn't working reliably.
+- **Wrong download source shown** - the Downloads list could show the wrong source for a game if it was already queued from a different one.
 
 ## 6.6.7b
 
