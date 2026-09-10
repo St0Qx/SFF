@@ -150,9 +150,9 @@ def _bridge_show_linux_fastest_workflow_notice(bridge, app_id):
 # ── Public download-domain functions (were @pyqtSlot methods) ────────
 
 def _bridge_download_game_fastest(bridge, app_id):
-    """Platform-aware fastest download (auto-selects source).
-    Windows: prompt-free 11-step pipeline mirroring process_lua_full().
-    Linux: auto-selects latest manifests, wraps process_from_store().
+    """Fastest download (auto-selects source).
+    Every platform: auto-selects latest manifests and runs
+    process_from_store() - native CDN downloader, DDMod as backup.
     Emits download_progress + task_finished signals."""
     if not app_id or not app_id.strip().isdigit():
         bridge._emit_task_result("download_fastest", False, f"Invalid App ID: '{app_id}'")
@@ -162,10 +162,7 @@ def _bridge_download_game_fastest(bridge, app_id):
             "app_id": app_id, "status": "Starting", "progress": 0
         }))
 
-        if sys.platform == "win32":
-            return _bridge_run_windows_fastest(bridge, app_id)
-        else:
-            return _bridge_run_linux_fastest(bridge, app_id)
+        return _bridge_run_linux_fastest(bridge, app_id)
 
     def _on_done(result):
         success = result is True
@@ -182,7 +179,7 @@ def _bridge_download_game_fastest(bridge, app_id):
 
 
 def _bridge_download_game_with_source(bridge, app_id, source, request_update='0', lua_path='', manifest_folder='', branch='', file_type=''):
-    """Fastest download with explicit source choice ('hubcap', 'oureveryday', 'ryuu', or 'local').
+    """Fastest download with explicit source choice ('hubcap', 'freelua', 'ryuu', or 'local').
     Emits download_progress + task_finished signals.
     When source='local', lua_path is required (path to .lua/.zip/.rar/.7z),
     manifest_folder is optional (path to folder with .manifest files)."""
@@ -205,10 +202,9 @@ def _bridge_download_game_with_source(bridge, app_id, source, request_update='0'
         # Local source: bypass all API calls, import directly
         if source == "local":
             return _bridge_run_local_import(bridge, app_id, lua_path, manifest_folder)
-        if sys.platform == "win32":
-            return _bridge_run_windows_fastest(bridge, app_id, source=source, request_update=(request_update == '1'), branch=branch, file_type=file_type)
-        else:
-            return _bridge_run_linux_fastest(bridge, app_id)
+        return _bridge_run_linux_fastest(
+            bridge, app_id, source=source, request_update=(request_update == '1'),
+        )
 
     def _on_done(result):
         if result == "source_empty":
@@ -357,165 +353,16 @@ def _bridge_run_local_import(bridge, app_id, lua_path, manifest_folder=''):
         return False
 
 
-def _bridge_run_windows_fastest(bridge, app_id, source='', request_update=False, branch='', file_type=''):
-    """Prompt-free 11-step pipeline for Windows."""
-    try:
-        from sff.lua.choices import download_lua_direct
-        from sff.lua.manager import parse_lua_contents
-        from sff.lua.writer import ACFWriter, ConfigVDFWriter
-        from sff.steam_tools_compat import install_lua_to_steam
-        from sff.core.storage.vdf import ensure_library_has_app
-        from sff.core.structs import LuaEndpoint
-
-        steam_path = bridge._steam_path
-        lib_path = Path(bridge._active_library) if bridge._active_library else steam_path
-
-        # Step 1: download lua
-        bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Downloading Lua", "progress": 0
-        }))
-        if source == "hubcap":
-            selected_source = LuaEndpoint.HUBCAP
-        elif source == "oureveryday":
-            selected_source = LuaEndpoint.OUREVERYDAY
-        elif source == "ryuu":
-            selected_source = LuaEndpoint.RYUU
-        elif source == "depotbox":
-            selected_source = LuaEndpoint.DEPOTBOX
-        else:
-            selected_source = LuaEndpoint.HUBCAP if bridge._api_key else LuaEndpoint.OUREVERYDAY
-        # Download lua into the per-user backup folder, NOT into
-        # <steam>/config/. install_lua_to_steam then copies it into
-        # <steam>/config/stplug-in/. Writing to <steam>/config/ directly
-        # left a stray <steam>/config/<app_id>.lua next to stplug-in/
-        # that the Remove from Library helper never cleans up.
-        saved_lua_root = Path.cwd() / "saved_lua"
-        saved_lua_root.mkdir(exist_ok=True)
-        lua_path = download_lua_direct(
-            dest=saved_lua_root,
-            app_id=app_id,
-            source=selected_source,
-            steam_path=steam_path,
-            request_update=request_update,
-        )
-        if not lua_path:
-            # download_lua_direct returns None on timeout against the Steam
-            # CM (30s ceiling) or any other source error. The sentinel tells
-            # _on_done to offer a source switch instead of a dead progress bar.
-            return "source_empty"
-
-        saved_lua = saved_lua_root
-        backup_target = saved_lua / f"{app_id}.lua"
-        try:
-            if lua_path != backup_target:
-                shutil.copyfile(lua_path, backup_target)
-        except Exception:
-            pass
-
-        # Step 2: parse lua
-        bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Parsing Lua", "progress": 0
-        }))
-        lua_contents = lua_path.read_text(encoding="utf-8", errors="replace")
-        parsed = parse_lua_contents(lua_contents, lua_path)
-        if not parsed:
-            return False
-        _auto_update_was_registered = _bridge_auto_update_was_registered(bridge, app_id)
-
-        # Step 4: register app ID for injection
-        bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Registering app ID", "progress": 0
-        }))
-        if hasattr(bridge._ui, 'app_list_man') and bridge._ui.app_list_man:
-            try:
-                bridge._ui.app_list_man.add_ids(parsed)
-            except Exception as e:
-                logger.warning("add_ids failed: %s", e)
-
-        # Step 5: write decryption keys
-        bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Writing decryption keys", "progress": 0
-        }))
-        config_writer = ConfigVDFWriter(steam_path)
-        try:
-            config_writer.add_decryption_keys_to_config(parsed)
-        except Exception as e:
-            logger.warning("add_decryption_keys failed: %s", e)
-
-        # Step 6: backup & install lua to Steam plugin dir
-        bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Installing Lua to Steam", "progress": 0
-        }))
-        try:
-            install_lua_to_steam(steam_path, app_id, lua_path)
-            _bridge_apply_auto_update_default(bridge, app_id, _auto_update_was_registered)
-        except Exception as e:
-            logger.warning("install_lua_to_steam failed: %s", e)
-
-        # Step 7: write ACF + patch workshop ACF
-        bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Writing ACF files", "progress": 0
-        }))
-        acf_writer = ACFWriter(lib_path)
-        try:
-            acf_writer.write_acf(parsed)
-        except Exception as e:
-            logger.warning("write_acf failed: %s", e)
-        try:
-            if hasattr(acf_writer, 'patch_workshop_acf'):
-                acf_writer.patch_workshop_acf(parsed)
-        except Exception as e:
-            logger.warning("patch_workshop_acf failed: %s", e)
-
-        # Step 8: register in libraryfolders.vdf
-        bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Registering in library", "progress": 0
-        }))
-        try:
-            ensure_library_has_app(steam_path, lib_path, app_id)
-        except Exception as e:
-            logger.warning("ensure_library_has_app failed: %s", e)
-
-        # Step 9: skip manifest download — Lua + depotcache already seeded.
-        # ManifestDownloader would trigger a 20-45s steam_client login that
-        # freezes the UI. The acf_writer + ensure_library_has_app above
-        # already registered everything Steam needs.
-
-        # Step 10: track in download manager
-        bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Updating download tracker", "progress": 100
-        }))
-        if hasattr(bridge._ui, 'download_manager') and bridge._ui.download_manager:
-            try:
-                from sff.network.http_utils import get_game_name
-                dl_id = bridge._ui.download_manager.track_external(
-                    app_id=app_id,
-                    game_name=get_game_name(app_id) or f"App {app_id}",
-                )
-                bridge._ui.download_manager.complete_external(dl_id, success=True)
-            except Exception as e:
-                logger.warning("download tracking failed: %s", e)
-
-        # Step 11: done
-        bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": "Complete", "progress": 100
-        }))
-        return True
-
-    except Exception as e:
-        logger.exception("Windows fastest download failed: %s", e)
-        bridge.download_progress.emit(json.dumps({
-            "app_id": app_id, "status": f"Error: {e}", "progress": 0
-        }))
-        return False
-
-
-def _bridge_run_linux_fastest(bridge, app_id):
-    """Wraps process_from_store; distinguishes real, partial, and no-sls runs."""
+def _bridge_run_linux_fastest(bridge, app_id, source='', request_update=False):
+    """Native downloader → DDMod pipeline via process_from_store, on every
+    platform. Windows uses it too since 6.6.8: SteaMidra downloads the files
+    itself instead of handing off to Steam/LumaCore.
+    Distinguishes real, partial, and no-sls runs."""
     # Refuse to run when SLSSteam is not initialized; the old code returned
     # silently and the UI rendered 100% complete despite no work happening.
+    # Windows has no SLSSteam at all, so the guard is Linux-only.
     sls_man = getattr(bridge._ui, "sls_man", None)
-    if sls_man is None:
+    if sls_man is None and sys.platform != "win32":
         bridge.download_progress.emit(json.dumps({
             "app_id": app_id,
             "status": "SLSSteam not initialized — cannot proceed",
@@ -543,6 +390,7 @@ def _bridge_run_linux_fastest(bridge, app_id):
             "app_id": app_id, "status": "Downloading via DepotDownloader", "progress": 0
         }))
 
+        use_hubcap = True if source == "hubcap" else (False if source else bool(bridge._api_key))
         from pathlib import Path as _Path
         lib_override = _Path(bridge._active_library) if bridge._active_library else bridge._steam_path
         from sff.network.http_utils import get_game_name
@@ -550,8 +398,10 @@ def _bridge_run_linux_fastest(bridge, app_id):
         result = bridge._ui.process_from_store(
             app_id=app_id,
             manifest_override=manifest_override,
-            use_hubcap=bool(bridge._api_key),
+            use_hubcap=use_hubcap,
             lib_path=lib_override,
+            lua_source=source if source in ("hubcap", "ryuu", "depotbox", "freelua") else "",
+            request_update=bool(request_update),
             print_fn=_make_run_download_print_fn(
                 bridge, app_id, _gname, list(manifest_override.keys()),
                 depot_sizes=_dsizes,
@@ -572,6 +422,13 @@ def _bridge_run_linux_fastest(bridge, app_id):
 
         from sff.game import download_queue as _dq
         if _dq.is_cancelled(str(app_id)):
+            return False
+        if result is MainReturnCode.DOWNLOAD_FAILED:
+            bridge.download_progress.emit(json.dumps({
+                "app_id": app_id, "name": _gname,
+                "status": "Download failed - manifests or depot content missing",
+                "progress": 0, "error": True,
+            }))
             return False
         bridge.download_progress.emit(json.dumps({
             "app_id": app_id, "name": _gname, "status": "Complete", "progress": 100
@@ -648,7 +505,7 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
          `dlcappid` matches the DLC appid. If Steam exposes the DLC as
          appid-only, append the appid line and stop there.
       2. For each depot, fetch the depot key from the bundled key
-         database (same one oureveryday uses for the full game flow).
+         database (the same bundled key store the free providers feed).
          Skip any depot whose key isn't on file.
       3. Pull the manifest bytes through the existing cascade
          (gmrc -> ManifestHub https mirrors -> GitHub mirror -> CDN)
@@ -1089,11 +946,20 @@ def _make_run_download_print_fn(bridge, app_id, game_name, selected_depots,
             pct_here = _last_pct[0] if _last_pct[0] >= 0 else 0.0
             _emit(f"Depot {dep}: {clean}", _base(dep) + (pct_here / 100.0) * _width(dep))
             return
+        # Manifest warnings/errors from the pipeline carry no percent; show
+        # them as a status line instead of burying them in debug.log.
+        if clean.lower().startswith(("no manifest", "error", "warning")):
+            logger.warning("download: %s", clean)
+            bridge.download_progress.emit(json.dumps({
+                "app_id": app_id, "name": game_name,
+                "status": clean[:160], "progress": -1,
+            }))
+            return
         logger.debug("build-downgrade: %s", clean)
     return _print_fn
 
 
-def _bridge_download_game_version(bridge, app_id, manifest_override_json, source='oureveryday', build_id=''):
+def _bridge_download_game_version(bridge, app_id, manifest_override_json, source='freelua', build_id=''):
     """Download specific version via process_from_store().
     Emits download_progress + task_finished signals."""
     if not app_id or not app_id.strip().isdigit():
@@ -1129,11 +995,12 @@ def _bridge_download_game_version(bridge, app_id, manifest_override_json, source
         from pathlib import Path as _Path
         from sff.core.structs import LuaEndpoint
         lib_override = _Path(bridge._active_library) if bridge._active_library else bridge._steam_path
-        src_map = {"hubcap": LuaEndpoint.HUBCAP, "ryuu": LuaEndpoint.RYUU, "oureveryday": LuaEndpoint.OUREVERYDAY, "depotbox": LuaEndpoint.DEPOTBOX}
-        selected = src_map.get(source, LuaEndpoint.HUBCAP if bridge._api_key else LuaEndpoint.OUREVERYDAY)
+        src_map = {"hubcap": LuaEndpoint.HUBCAP, "ryuu": LuaEndpoint.RYUU, "freelua": LuaEndpoint.FREELUA, "depotbox": LuaEndpoint.DEPOTBOX}
+        selected = src_map.get(source, LuaEndpoint.HUBCAP if bridge._api_key else LuaEndpoint.FREELUA)
 
+        from sff.core.structs import MainReturnCode
         try:
-            bridge._ui.process_from_store(
+            result = bridge._ui.process_from_store(
                 app_id=app_id,
                 manifest_override=manifest_override,
                 use_hubcap=(selected == LuaEndpoint.HUBCAP),
@@ -1146,6 +1013,17 @@ def _bridge_download_game_version(bridge, app_id, manifest_override_json, source
             )
         except Exception:
             logger.exception("download_game_version: process_from_store failed for %s", app_id)
+            return False
+
+        # LOOP_NO_PROMPT = aborted before any content download (no library,
+        # lua fetch/parse failed); DOWNLOAD_FAILED = download engine gave up.
+        if result is not MainReturnCode.LOOP:
+            logger.error("download_game_version: app %s ended with %s", app_id, result)
+            bridge.download_progress.emit(json.dumps({
+                "app_id": app_id, "name": game_name,
+                "status": "Download failed - check the log for manifest/depot errors",
+                "progress": 0, "error": True,
+            }))
             return False
 
         bridge.download_progress.emit(json.dumps({
@@ -1351,7 +1229,7 @@ def _native_install_pinned(bridge, app_id, lua_path, manifest_override, skip_aut
     return True
 
 
-def _bridge_download_game_version_native(bridge, app_id, manifest_override_json, source='oureveryday', build_id=''):
+def _bridge_download_game_version_native(bridge, app_id, manifest_override_json, source='freelua', build_id=''):
     """Download specific version via Steam Native flow.
     Downloads Lua, pins manifests with write_manifest_pins_to_lua,
     installs to Steam plugin folder, writes ACF. Steam downloads
@@ -1384,8 +1262,8 @@ def _bridge_download_game_version_native(bridge, app_id, manifest_override_json,
 
         saved_lua_root = Path.cwd() / "saved_lua"
         saved_lua_root.mkdir(exist_ok=True)
-        src_map = {"hubcap": LuaEndpoint.HUBCAP, "ryuu": LuaEndpoint.RYUU, "oureveryday": LuaEndpoint.OUREVERYDAY, "depotbox": LuaEndpoint.DEPOTBOX}
-        selected_source = src_map.get(source, LuaEndpoint.HUBCAP if bridge._api_key else LuaEndpoint.OUREVERYDAY)
+        src_map = {"hubcap": LuaEndpoint.HUBCAP, "ryuu": LuaEndpoint.RYUU, "freelua": LuaEndpoint.FREELUA, "depotbox": LuaEndpoint.DEPOTBOX}
+        selected_source = src_map.get(source, LuaEndpoint.HUBCAP if bridge._api_key else LuaEndpoint.FREELUA)
         lua_path = download_lua_direct(
             dest=saved_lua_root, app_id=app_id,
             source=selected_source, steam_path=steam_path,
@@ -1463,7 +1341,7 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
             from sff.lua.choices import download_lua_direct
             from sff.core.structs import LuaEndpoint as _LE
             try:
-                _src = _LE.HUBCAP if bridge._api_key else _LE.OUREVERYDAY
+                _src = _LE.HUBCAP if bridge._api_key else _LE.FREELUA
                 _fetched = download_lua_direct(
                     Path(steam_path) / "config" / "stplug-in",
                     app_id, _src, steam_path=steam_path,
@@ -1719,9 +1597,257 @@ def _bridge_download_older_version_auto(bridge, app_id, build_id):
 
 # ── DDMod download ────────────────────────────────────────────────────
 
-def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folder='', target_os='', branch='', file_type='', custom_depots=''):
+def _bridge_fetch_depot_filetree(bridge, app_id, depot_id, lua_path=''):
+    """Fetch one depot's file tree for the Advanced picker's explorer modal.
+    Runs on a worker thread and emits depot_filetree_results."""
+    aid = str(app_id or "").strip()
+    did = str(depot_id or "").strip()
+
+    def _emit(payload):
+        try:
+            bridge.depot_filetree_results.emit(json.dumps(payload))
+        except Exception:
+            logger.debug("depot_filetree emit failed", exc_info=True)
+
+    if not aid.isdigit() or not did.isdigit():
+        _emit({"depot_id": did, "ok": False, "error": "Invalid App or Depot ID."})
+        return
+
+    def _step(msg):
+        logger.info("filetree[%s/%s]: %s", aid, did, msg)
+
+    def _do():
+        from pathlib import Path as _P
+        import time as _t
+        _t0 = _t.monotonic()
+        _step("start")
+        from sff.lua.manager import parse_lua_contents
+
+        steam_path = bridge._steam_path
+
+        # Key + pinned GID come from any lua already on disk that carries
+        # this depot: an explicit local file, the installed stplug-in copy,
+        # saved_lua, then the bundled key DB.
+        key, gid = "", ""
+        lua_candidates = []
+        if lua_path:
+            lua_candidates.append(_P(lua_path))
+        if steam_path:
+            lua_candidates.append(_P(steam_path) / "config" / "stplug-in" / f"{aid}.lua")
+        lua_candidates.append(_P.cwd() / "saved_lua" / f"{aid}.lua")
+        for lp in lua_candidates:
+            try:
+                if not lp.is_file():
+                    continue
+                parsed = parse_lua_contents(lp.read_text(encoding="utf-8", errors="replace"), lp)
+                if not parsed:
+                    continue
+                for dp in parsed.depots:
+                    if str(dp.depot_id) == did and dp.decryption_key:
+                        key = dp.decryption_key
+                        gid = str((parsed.manifest_overrides or {}).get(did, "") or "")
+                        break
+                if key:
+                    break
+            except Exception:
+                continue
+        if not key:
+            try:
+                _fdb = _P(__file__).parent.parent.parent / "lua" / "fallback_depotkeys.json"
+                entry = json.loads(_fdb.read_text(encoding="utf-8")).get(did)
+                if isinstance(entry, dict):
+                    key = str(entry.get("key", "") or "")
+                elif isinstance(entry, str):
+                    key = entry
+            except Exception:
+                pass
+        _step("lua key lookup: %s (gid=%s)" % ("found" if key else "missing", gid or "-"))
+        from sff.core.storage.settings import get_setting as _gs
+        from sff.core.structs import Settings as _St
+
+        # The provider bundles carry the lua AND every depot manifest for
+        # the app, and seeding writes the manifests into depotcache. If the
+        # key isn't known locally yet, pull a bundle now instead of telling
+        # the user to fetch it manually. The revobd.club zip (same bundle
+        # Free Providers uses) needs no key at all.
+        _dc_zip = _P(steam_path) / "depotcache" if steam_path else None
+        if not key:
+            _step("fetching revobd bundle...")
+            try:
+                import io as _io
+                import httpx as _httpx
+                from sff.zip import read_lua_from_zip as _rlz
+                _rz = _httpx.get(f"https://api.luagen.revobd.club/{aid}.zip",
+                                 timeout=30, follow_redirects=True)
+                _step("revobd bundle HTTP %s" % _rz.status_code)
+                if _rz.status_code == 200 and _rz.content:
+                    _lt = _rlz(_io.BytesIO(_rz.content), decode=True, depotcache=_dc_zip)
+                    if _lt:
+                        _p2 = parse_lua_contents(_lt, None)
+                        if _p2:
+                            for _dp in _p2.depots:
+                                if str(_dp.depot_id) == did and _dp.decryption_key:
+                                    key = _dp.decryption_key
+                                    gid = gid or str((_p2.manifest_overrides or {}).get(did, "") or "")
+                                    break
+            except Exception:
+                logger.debug("filetree revobd bundle fetch failed", exc_info=True)
+
+        # Hubcap/Ryuu bundles next (both need a saved key): same trick,
+        # seeded manifests land in depotcache.
+        if not key:
+            _hk = (_gs(_St.HUBCAP_KEY) or "").strip()
+            _rk = (_gs(_St.RYUU_KEY) or "").strip()
+            if _hk or _rk:
+                _step("fetching %s bundle..." % ("/".join(x for x, has in (("hubcap", _hk), ("ryuu", _rk)) if has)))
+                try:
+                    _lua_dest = _P.cwd() / "saved_lua"
+                    _lua_dest.mkdir(parents=True, exist_ok=True)
+                    _dc_zip = _P(steam_path) / "depotcache" if steam_path else None
+                    from sff.lua.endpoints import get_hubcap, get_ryuu
+                    _f = get_hubcap(_lua_dest, aid, depotcache=_dc_zip, hubcap_key=_hk) if _hk else None
+                    if _f is None and _rk:
+                        _f = get_ryuu(_lua_dest, aid, request_update=False, branch="public",
+                                      file_type="zip", depotcache=_dc_zip)
+                    _step("bundle fetch returned %s" % (_f or "None"))
+                    if _f:
+                        _lf = _P(_f)
+                        if _lf.suffix.lower() in (".zip", ".rar", ".7z"):
+                            from sff.zip import read_lua_from_zip
+                            _lt = read_lua_from_zip(_lf, decode=True, depotcache=_dc_zip)
+                        else:
+                            _lt = _lf.read_text(encoding="utf-8", errors="replace")
+                        _p2 = parse_lua_contents(_lt or "", _lf)
+                        if _p2:
+                            for _dp in _p2.depots:
+                                if str(_dp.depot_id) == did and _dp.decryption_key:
+                                    key = _dp.decryption_key
+                                    gid = gid or str((_p2.manifest_overrides or {}).get(did, "") or "")
+                                    break
+                except Exception:
+                    logger.debug("filetree provider bundle fetch failed", exc_info=True)
+
+        if not key:
+            _emit({"depot_id": did, "ok": False,
+                   "error": "No decryption key could be resolved for this depot."})
+            return
+
+        # Local manifest scans. provider=None is safe: only depotcache /
+        # staging lookups run on this instance.
+        md = None
+        try:
+            from sff.manifest.downloader import ManifestDownloader
+            md = ManifestDownloader(provider=None,
+                                    steam_path=_P(steam_path) if steam_path else _P.cwd(),
+                                    use_hubcap=False)
+        except Exception:
+            logger.debug("filetree downloader init failed", exc_info=True)
+
+        # No pinned GID in the lua: latest local copy in depotcache, else
+        # the current public GID from appinfo.
+        if not gid and md is not None:
+            try:
+                found = md._find_latest_local_manifest_id(did)
+                if found:
+                    gid = found[0]
+                    _step("gid from local depotcache scan: %s" % gid)
+            except Exception:
+                logger.debug("filetree local manifest scan failed", exc_info=True)
+        if not gid:
+            _step("no pinned gid; resolving public gid via appinfo...")
+            try:
+                from sff.network.steam_client import create_provider_for_current_thread
+                info = create_provider_for_current_thread().get_app_info_http_only([int(aid)]).get(int(aid)) or {}
+                mani = (info.get("depots", {}) or {}).get(did, {}).get("manifests", {}) or {}
+                pub = mani.get("public") if isinstance(mani, dict) else None
+                if isinstance(pub, dict):
+                    pub = pub.get("gid")
+                gid = str(pub or "")
+                _step("appinfo public gid: %s" % (gid or "-"))
+            except Exception:
+                logger.debug("filetree appinfo gid resolve failed", exc_info=True)
+        if not gid.isdigit():
+            _step("FAILED: no resolvable gid")
+            _emit({"depot_id": did, "ok": False,
+                   "error": "No manifest version could be resolved for this depot."})
+            return
+
+        raw = None
+        if md is not None:
+            try:
+                local = md._find_exact_local_manifest(did, gid)
+                if local:
+                    raw = local.read_bytes()
+                    _step("local manifest hit: %s (%d bytes)" % (local.name, len(raw)))
+            except Exception:
+                logger.debug("filetree local manifest read failed", exc_info=True)
+
+        # Nothing cached locally: one bounded, NON-interactive fetch.
+        # Hubcap on-demand generates the exact manifest file with the key
+        # the user already saved. download_single_manifest is deliberately
+        # not used here - its ManifestHub step prompts for a key and a
+        # dialog fired from a worker thread is invisible behind this modal,
+        # which is what made the explorer appear to hang forever.
+        if not raw and md is not None:
+            try:
+                if (_gs(_St.HUBCAP_KEY) or "").strip():
+                    _step("no local copy, trying Hubcap on-demand...")
+                    raw = md._try_hubcap_generate(did, gid)
+                    _step("Hubcap on-demand: %s" % ("got %d bytes" % len(raw) if raw else "no result"))
+            except Exception:
+                logger.debug("filetree hubcap on-demand failed", exc_info=True)
+        if raw and steam_path:
+            # Cache it so the next open is instant and a later download
+            # finds the same manifest instead of refetching.
+            try:
+                from sff.core.utils import manifests_staging_dir
+                _dc3 = _P(steam_path) / "depotcache"
+                _dc3.mkdir(parents=True, exist_ok=True)
+                _mfp = _dc3 / f"{did}_{gid}.manifest"
+                if not _mfp.exists():
+                    _mfp.write_bytes(raw)
+                _stg = manifests_staging_dir()
+                _stg.mkdir(exist_ok=True)
+                _stp = _stg / f"{did}_{gid}.manifest"
+                if not _stp.exists():
+                    _stp.write_bytes(raw)
+            except Exception:
+                logger.debug("filetree manifest cache write failed", exc_info=True)
+        if not raw:
+            _step("FAILED: no manifest bytes")
+            _emit({"depot_id": did, "ok": False, "gid": gid,
+                   "error": "The manifest file isn't cached for this depot yet and "
+                            "Hubcap on-demand didn't return it. Start a download "
+                            "once - the provider bundle includes this depot's "
+                            "manifest - then the file list opens instantly."})
+            return
+
+        try:
+            from sff.downloads.native_downloader import decode_manifest
+            from sff.downloads.filetree import build_file_tree
+            _step("decoding manifest (%d bytes)..." % len(raw))
+            _maps = decode_manifest(raw, bytes.fromhex(key)).get("mappings", [])
+            tree = build_file_tree(_maps)
+            _step("decoded %d entries, emitting tree (%.1fs)" % (len(_maps), _t.monotonic() - _t0))
+        except Exception as e:
+            _step("FAILED: decode error %s" % e)
+            logger.debug("filetree decode failed", exc_info=True)
+            _emit({"depot_id": did, "ok": False, "gid": gid,
+                   "error": f"Manifest could not be decrypted ({e}). The depot key may be wrong."})
+            return
+
+        _emit({"depot_id": did, "ok": True, "gid": gid, "tree": tree})
+
+    def _on_error(msg):
+        _step("worker raised: %s" % msg)
+        _emit({"depot_id": did, "ok": False, "error": str(msg)})
+
+    bridge._run_async(_do, on_done=lambda r: None, on_error=_on_error)
+
+
+def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folder='', target_os='', branch='', file_type='', custom_depots='', file_filters=''):
     """Download a game using DepotDownloaderMod.
-    source: 'hubcap' | 'oureveryday' | 'ryuu' | 'local'
+    source: 'hubcap' | 'freelua' | 'ryuu' | 'local'
     lua_path: used when source == 'local'
     Emits download_progress + task_finished signals."""
     if not app_id or not app_id.strip().isdigit():
@@ -1742,7 +1868,7 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
             import io
             import sys
             from pathlib import Path as _Path
-            from sff.lua.endpoints import get_hubcap, get_oureverday, get_ryuu, get_depotbox
+            from sff.lua.endpoints import get_hubcap, get_freelua, get_ryuu, get_depotbox
             from sff.lua.manager import parse_lua_contents
             from sff.downloads.depot_downloader import run_download, filter_depots_by_os
 
@@ -1829,8 +1955,8 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                     return (False, f"Lua file not found: {lua_path}")
             elif source == "hubcap":
                 lua_file = get_hubcap(lua_dest, app_id, depotcache=(steam_path / "depotcache") if steam_path else None, hubcap_key=bridge._api_key)
-            elif source == "oureveryday":
-                lua_file = get_oureverday(lua_dest, app_id)
+            elif source == "freelua":
+                lua_file = get_freelua(lua_dest, app_id, depotcache=(steam_path / "depotcache") if steam_path else None)
             elif source == "ryuu":
                 lua_file = get_ryuu(lua_dest, app_id, request_update=False, branch=branch, file_type=file_type, depotcache=(steam_path / "depotcache") if steam_path else None)
             elif source == "depotbox":
@@ -1864,8 +1990,8 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
 
             # ── Steam registration (LumaCore on Windows / SLSSteam on Linux) ──
             # Without these the library card shows "Buy" because Steam never
-            # learns about the install. Mirror _run_windows_fastest on win32
-            # and process_from_store on linux. LumaCore is Windows-only so
+            # learns about the install. Same steps as process_from_store.
+            # LumaCore is Windows-only so
             # the stplug-in copy never runs on Linux (requirement 2.33).
             if not dest_is_library:
                 logger.info("DDMod dest %s is not a Steam library; extracting without Steam registration", dest)
@@ -2100,7 +2226,7 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
             installdir = _clean_installdir or f"App_{parsed.app_id or app_id}"
 
             # Pin info: tell the user if the Lua has setManifestid pins
-            if source in ("hubcap", "ryuu"):
+            if source in ("hubcap", "ryuu", "freelua"):
                 _pin_map = getattr(parsed, "manifest_overrides", {}) or {}
                 if _pin_map:
                     from sff.core.storage.settings import get_setting as _gs
@@ -2121,20 +2247,11 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                     _dc2 = steam_path / "depotcache"
                     _dc2.mkdir(parents=True, exist_ok=True)
                     _eff_app_id = str(parsed.app_id or app_id)
-                    # get_cdn_client retries 5x with long timeouts and can
-                    # stall for minutes on a flaky CDN. Only pay for it when
-                    # a manifest file is actually missing on disk.
-                    _need_fetch = [
-                        (d, g) for d, g in list(manifests_dict.items())
-                        if not (_dc2 / f"{d}_{g}.manifest").exists()
-                        and not (_staging / f"{d}_{g}.manifest").exists()
-                    ]
-                    _cdn2 = None
-                    if _provider and _need_fetch:
-                        try:
-                            _cdn2 = _md2.get_cdn_client()
-                        except Exception as _ce:
-                            logger.debug("CDN client init failed (non-fatal): %s", _ce)
+                    # No get_cdn_client() here on purpose: Steam stopped serving
+                    # manifests to clients that don't own the game, and
+                    # download_single_manifest ignores the client parameter
+                    # anyway - it ran the GMRC/GitHub/ManifestHub cascade.
+                    # Building it only stalled 5x25s on a dead CM connection.
                     for _depot_id, _manifest_id in list(manifests_dict.items()):
                         _dc_mf = _dc2 / f"{_depot_id}_{_manifest_id}.manifest"
                         _dest_mf = _staging / f"{_depot_id}_{_manifest_id}.manifest"
@@ -2147,18 +2264,21 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                             _step4_shutil.copy2(_dest_mf, _dc_mf)
                             continue
                         print(f"Fetching manifest for depot {_depot_id} ({_manifest_id})...")
-                        if _cdn2:
-                            _data = _md2.download_single_manifest(_depot_id, _manifest_id, cdn_client=_cdn2, app_id=_eff_app_id)
-                        else:
-                            _data = _md2._try_manifesthub_combined(_depot_id, _manifest_id, _eff_app_id)
+                        _data = _md2.download_single_manifest(_depot_id, _manifest_id, app_id=_eff_app_id)
                         if _data:
                             _written = _md2._write_manifest_to_depotcache(_data, _depot_id, _manifest_id)
                             if _written and not _dest_mf.exists():
                                 _step4_shutil.copy2(_written, _dest_mf)
                         else:
-                            logger.debug("All sources failed for manifest depot %s", _depot_id)
+                            logger.warning("All manifest sources failed for depot %s (app %s)", _depot_id, app_id)
+                            bridge.download_progress.emit(json.dumps({
+                                "app_id": app_id,
+                                "name": game_name or f"App {app_id}",
+                                "status": f"No manifest could be fetched for depot {_depot_id}",
+                                "progress": -1,
+                            }))
                 except Exception as _fe:
-                    logger.debug("Manifest fetch failed (non-fatal): %s", _fe)
+                    logger.warning("Manifest fetch step failed (non-fatal): %s", _fe)
 
             game_data = {
                 "appid": parsed.app_id or app_id,
@@ -2186,7 +2306,7 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                     False,
                     "No manifest IDs available for any depot. "
                     "Drop a folder of .manifest files into the modal, "
-                    "pick a manifest source (Hubcap/Ryuu/oureveryday), "
+                    "pick a manifest source (Hubcap/Ryuu/Free Providers), "
                     "or run Update All Games first.",
                 )
 
@@ -2448,6 +2568,17 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
 
                 if not clean.startswith(_PASS_PREFIXES) and now - _last_emit[0] < 0.2:
                     return
+                if clean.lower().startswith(("no manifest", "error", "warning", "[!]")):
+                    logger.warning("ddmod download: %s", clean)
+                    try:
+                        bridge.download_progress.emit(json.dumps({
+                            "app_id": app_id,
+                            "name": game_name or f"App {app_id}",
+                            "status": clean[:160], "progress": -1,
+                        }))
+                    except Exception:
+                        pass
+                    return
                 _last_emit[0] = now
                 print(clean)
 
@@ -2483,7 +2614,20 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
             for _sk in [k for k in list(depots_dict.keys()) if k not in selected_depots]:
                 del depots_dict[_sk]
 
-            ok, _size = run_download(game_data, selected_depots, dest, steam_path, print_fn=_print_fn, os_name=_target_os)
+            _ff = {}
+            if file_filters:
+                try:
+                    _sel = json.loads(file_filters)
+                    if isinstance(_sel, dict):
+                        for _fd, _fl in _sel.items():
+                            _fl = [str(p) for p in (_fl or []) if str(p).strip()]
+                            if _fl:
+                                _ff[str(_fd)] = _fl
+                except Exception:
+                    _ff = {}
+            _ff = {k: v for k, v in _ff.items() if k in depots_dict}
+
+            ok, _size = run_download(game_data, selected_depots, dest, steam_path, print_fn=_print_fn, os_name=_target_os, file_filters=_ff)
 
             # Neither the native downloader nor DepotMod sets exec bits on
             # Linux, so game launchers land non-executable and Steam fails
@@ -2596,7 +2740,7 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                     app_id=app_id, cancelled=True,
                 )
                 return
-        if ok and source in ("hubcap", "ryuu"):
+        if ok and source in ("hubcap", "ryuu", "freelua"):
             QTimer.singleShot(1000, bridge._maybe_auto_contribute_provider)
         game_data = getattr(bridge, '_current_game_data', None)
         if isinstance(result, tuple) and result[0]:

@@ -131,7 +131,7 @@
         //                       call. Both providers only ship the full
         //                       parent zip so we hand them the parent appid
         //                       and let them pull every DLC in one go.
-        //   * oureveryday    -> per-checked-DLC manifest+key append against
+        //   * freelua    -> per-checked-DLC manifest+key append against
         //                       the parent's existing lua. Loops only over
         //                       what the user actually checked.
         //   * local          -> opens the manifest-folder picker and runs
@@ -142,7 +142,7 @@
             bulk.style.display = 'flex';
             bulk.querySelectorAll('.dlc-bulk-dl').forEach(function (btn) {
                 btn.onclick = function () {
-                    var src = this.dataset.source || 'oureveryday';
+                    var src = this.dataset.source || 'freelua';
                     if (!_currentAppId) {
                         Components.showToast('warning', 'Parent app id missing.');
                         return;
@@ -178,12 +178,12 @@
                         });
                         return;
                     }
-                    // oureveryday
+                    // freelua
                     if (!checkedIds.length) {
                         Components.showToast('warning', 'Tick at least one DLC first.');
                         return;
                     }
-                    Components.showToast('info', 'Queueing ' + checkedIds.length + ' DLC(s) through MidraEveryDay...');
+                    Components.showToast('info', 'Queueing ' + checkedIds.length + ' DLC(s) through Free Providers...');
                     checkedIds.forEach(function (id) {
                         Bridge.call('download_dlc_oureveryday',
                             String(id), String(_currentAppId));

@@ -371,7 +371,7 @@ class VersionPickerDialog(QDialog):
                 f"Select source for the Lua file (decryption keys + app setup):"
             ))
             hl = _QHL()
-            btn_oe = _QPB("oureveryday")
+            btn_oe = _QPB("Free Providers")
             btn_hc = _QPB("Hubcap Manifest")
             btn_cancel = _QPB("Cancel")
             hl.addWidget(btn_oe)

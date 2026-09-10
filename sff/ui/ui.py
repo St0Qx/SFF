@@ -949,13 +949,15 @@ class UI:
             )
         return MainReturnCode.LOOP
 
-    def process_from_store(self, app_id: str, manifest_override: dict, use_hubcap: bool, lib_path=None, print_fn=print, force_ddmod: bool = False, build_id_override: str = ""):
+    def process_from_store(self, app_id: str, manifest_override: dict, use_hubcap: bool, lib_path=None, print_fn=print, force_ddmod: bool = False, build_id_override: str = "", lua_source: str = "", request_update: bool = False):
         """Full download pipeline triggered from the Store tab version picker.
         Downloads game files via DepotDownloaderMod, then writes ACF so
         Steam shows a Play button instead of Update/Install.
         lib_path: pre-selected Steam library path; skips the interactive prompt when provided.
         print_fn: routes run_download's progress lines to the caller.
         force_ddmod: skip the native CDN downloader, use DDMod only.
+        lua_source: explicit provider ("hubcap"/"ryuu"/"depotbox"/"freelua");
+                    overrides use_hubcap. Kept for the Home-tab download flow.
         """
         import time
         from pathvalidate import sanitize_filename
@@ -971,13 +973,20 @@ class UI:
             return MainReturnCode.LOOP_NO_PROMPT
         saved_lua = Path.cwd() / "saved_lua"
         saved_lua.mkdir(exist_ok=True)
-        source = LuaEndpoint.HUBCAP if use_hubcap else LuaEndpoint.OUREVERYDAY
+        _src_map = {
+            "hubcap": LuaEndpoint.HUBCAP, "ryuu": LuaEndpoint.RYUU,
+            "depotbox": LuaEndpoint.DEPOTBOX, "freelua": LuaEndpoint.FREELUA,
+        }
+        source = _src_map.get(lua_source) or (LuaEndpoint.HUBCAP if use_hubcap else LuaEndpoint.FREELUA)
         print(
             Fore.CYAN
             + f"\nDownloading Lua for app {app_id} from {source.value}…"
             + Style.RESET_ALL
         )
-        lua_path = download_lua_direct(saved_lua, app_id, source, self.steam_path)
+        lua_path = download_lua_direct(
+            saved_lua, app_id, source, self.steam_path,
+            request_update=request_update if source == LuaEndpoint.RYUU else None,
+        )
         if lua_path is None:
             print(Fore.RED + "Failed to download Lua file. Aborting." + Style.RESET_ALL)
             return MainReturnCode.LOOP_NO_PROMPT
@@ -1071,10 +1080,44 @@ class UI:
         )
         use_parallel = get_setting(Settings.USE_PARALLEL_DOWNLOADS)
         print(Fore.YELLOW + "\nPre-downloading manifests for DepotDownloaderMod:" + Style.RESET_ALL)
-        if use_parallel:
-            downloader.download_manifests_parallel(parsed_lua, auto_manifest=False, manifest_override=manifest_override)
-        else:
-            downloader.download_manifests(parsed_lua, auto_manifest=False, manifest_override=manifest_override)
+        try:
+            if use_parallel:
+                _mf_written = downloader.download_manifests_parallel(parsed_lua, auto_manifest=False, manifest_override=manifest_override)
+            else:
+                _mf_written = downloader.download_manifests(parsed_lua, auto_manifest=False, manifest_override=manifest_override)
+        except Exception as exc:
+            logger.warning("manifest pre-download raised for app %s: %s", app_id, exc)
+            _mf_written = []
+        _mf_have = {p.stem.split("_", 1)[0] for p in (_mf_written or []) if "_" in p.stem}
+        _mf_missing = [str(d) for d in (manifest_override or {}) if str(d) not in _mf_have]
+        if manifest_override and not _mf_have:
+            # Every source checked and nothing had the manifest: local cache,
+            # the provider bundle (Hubcap/Ryuu/DepotBox write into depotcache
+            # and were preseeded above), ManifestHub, GMRC mirrors, GitHub.
+            # Without it the downloader can't know which files belong to the
+            # depot, so stop instead of "downloading" 0 bytes.
+            _err = (
+                "Cannot download: no manifest is available for this game yet. "
+                "Checked local cache, ManifestHub, GMRC mirrors, GitHub and the "
+                "manifest providers - none had it. Manifests usually appear "
+                "hours to a few days after a game updates; try an older build "
+                "from the version picker, or retry later."
+            )
+            logger.warning("No manifest found for app %s from ANY source - aborting", app_id)
+            print_fn(Fore.RED + "\n" + _err + Style.RESET_ALL)
+            self.notification_service.show_error("Manifests unavailable", f"{app_id}: {_err}")
+            return MainReturnCode.DOWNLOAD_FAILED
+        if _mf_missing:
+            logger.warning(
+                "Manifests unavailable for app %s, depot(s): %s", app_id, ", ".join(_mf_missing)
+            )
+            print_fn(
+                Fore.YELLOW
+                + f"\nNo manifest could be fetched for depot(s): {', '.join(_mf_missing)}. "
+                  + "Steam no longer serves manifests to anonymous clients, so these depots "
+                  + "will most likely download 0 bytes."
+                + Style.RESET_ALL
+            )
         print(Fore.YELLOW + "\nChecking .NET 9 runtime:" + Style.RESET_ALL)
         if not ensure_dotnet_9():
             print(Fore.RED + ".NET 9 is required for DepotDownloaderMod. Aborting download." + Style.RESET_ALL)
@@ -1110,12 +1153,9 @@ class UI:
             _shutil.rmtree(MANIFESTS_TMP, ignore_errors=True)
         except Exception:
             pass
-        _depotcache = lib_path / "depotcache"
-        for _did, _mid in manifest_override.items():
-            try:
-                (_depotcache / f"{_did}_{_mid}.manifest").unlink(missing_ok=True)
-            except Exception:
-                pass
+        # The manifests stay in depotcache on purpose: the ACF points at them,
+        # and Steam's verify needs them again later. The manifest preserver
+        # restores them if Steam ever wipes them on uninstall.
         buildid = "0"
         all_depots = {}
         acf_manifest_map = dict(manifest_override)
@@ -1187,13 +1227,17 @@ class UI:
                 + Style.RESET_ALL
             )
         else:
+            self.notification_service.show_error(
+                "Download Failed",
+                f"{parsed_lua.app_id} did not download completely. Check the log.",
+            )
             print(
                 Fore.RED
                 + "\nDownload failed. Check output above. No ACF was written, "
                 + "so Steam will not show this as installed — retry the download."
                 + Style.RESET_ALL
             )
-        return MainReturnCode.LOOP
+        return MainReturnCode.LOOP if download_ok else MainReturnCode.DOWNLOAD_FAILED
 
     def manage_context_menu(self):
         choice = prompt_select(

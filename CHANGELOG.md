@@ -1,20 +1,52 @@
 # Changelog
 
-## Unreleased
+## 6.6.7d
 
 ### New
 
+- **Free Providers source** - a new default download source that chains the keyless providers in priority order: trionine ManifestHub (depot keys + live manifest pins built the same way the site itself does, backed by the bundled key DB when the shared dump is missing a depot), the revobd bundle (ships real .manifest files), then the steamtoolsapp/ManifestHub and steamtools-games/ManifestHub3 repos. Found manifests are seeded straight into depotcache, so downloads and the depot file explorer skip the mirror cascade. Replaces MidraEveryDay, which only supplied keys.
 - **Advanced depot picker** - an Advanced link next to Depot OS in the download dialogs opens a "Select Depots" list of the game's depots with checkboxes, OS and size columns, and an Open SteamDB link for reference. Picking depots adds a Custom option to Depot OS and the native download fetches exactly those depots, with no OS filtering.
+- **Per-depot file selection** - in the Advanced depot picker, a folder icon next to each depot name opens a "Files" explorer: the depot's full folder/file tree read from its manifest, nested and indented, with sizes and checkboxes per entry. Pick exactly what downloads; Deselect All clears the list, OK keeps the selection (folders left partially ticked download only their ticked children). Selected depots show a "(N selected)" tag; tick everything again to go back to full-depot downloads. Works on both download engines: the native downloader filters at chunk level, DepotDownloaderMod gets a generated -filelist. Needs the depot's manifest + key to be resolvable (any provider you've used, or the bundled key DB); a clear error names the reason otherwise. Your pick is remembered when you reopen the explorer, the "(N selected)" tag counts every file recursively, and picking files auto-ticks the depot in the list.
 - **Relative update dates** - Store cards show "Updated: 3 hours ago" instead of a raw timestamp, with the exact date in the hover tooltip. The label hides when sorting by update date, where it duplicates the sort order.
+- **Key-based source auto-select** - download pickers open on Hubcap if you have a Hubcap key saved (same for Ryuu/DepotBox), Free Providers otherwise.
 
 ### Fixed
 
+- **Hubcap key save froze the window** - clicking Save after pasting a Hubcap API key validated the key against Hubcap on the GUI thread, so a slow or unreachable Hubcap froze SteaMidra until the request timed out. The check now runs in the background like every other network action. The Google Drive status check had the same issue (unbounded call to Google) and is now capped at 2 seconds with the email filled in afterwards.
+- **Depot file explorer could hang on "Reading depot manifest..."** - two causes. The explorer's result signal was never forwarded to the page (bridge.js only wires up signals on its whitelist, and this one was missing), so the modal waited forever no matter how fast the fetch was. And the fetch itself reused the download cascade, which can chain minutes of retries (120s CDN waits, interactive ManifestHub key prompts that open invisibly behind the modal); it now reads the local manifest cache first and, on a miss, grabs the key-free revobd bundle (which carries every depot manifest) or the Hubcap/Ryuu bundle you have a key for. Fetched manifests are saved to depotcache, so opening the same depot twice is instant.
+- **Web UI updates needed a browser-cache roulette** - QtWebEngine kept the local js/css on its disk cache and happily served stale copies after an update, so behavior could silently lag the code. Local assets now bypass the HTTP cache entirely, and every script/link tag in the page carries a version stamp that makes stale entries impossible to match.
 - **Depot OS default** - Auto is gone; the select now defaults to your running OS when the game has depots for it, so what you see is what downloads.
 - **Download speed counter** - the native downloader reported decompressed bytes written to disk, so on compressed depots the "MB/s" line read 2-4x your real line speed. It now measures bytes actually pulled from the CDN.
 - **Crack Files on Windows** - applying a community fix could report "Game install folder not found" even when the game was installed, if the main Steam folder wasn't listed in libraryfolders.vdf. The install folder lookup now checks the Steam root like the downgrade flow does.
 - **macOS label** - depot OSes now display as "macOS" instead of "Macosx".
 - **Recently Updated showed stale dates** - the Store's update dates froze around mid-June because the upstream games.json dropped the field they read. Dates now come from Steam's own last-modified stamp, so Recently Updated shows games actually updated this week.
 - **all_games.txt refresh failed with 403** - when Steam rejects the bundled web API key, the Store list update now falls back to the GitHub mirrors instead of reporting an error, so the game list keeps refreshing.
+- **Fake "Downloaded successfully" from DDMod** - DepotDownloaderMod exits 0 even when it never resolved a manifest (Steam stopped serving manifests to anonymous clients), so a depot that wrote zero bytes was logged as a success and the whole download reported Complete. A no-manifest depot that adds no bytes is now marked failed.
+- **Download tab froze on "Done" during a re-download** - re-downloading a game right after deleting it kept showing the old Done row in History while the new download ran invisibly, because events from a fresh run were dropped once a row reached a finished state. A new run now takes over its old row. Failed downloads also keep their error text on the row instead of only in a 4s toast.
+- **Manifest errors invisible on Linux** - when every manifest source (mirrors, GitHub, ManifestHub) failed for a depot, the download carried on silently and the failure only showed up as a "Complete" with missing files. The failing depot is now named in the Downloads tab status line and in debug.log at warning level.
+- **Version download reported Complete on abort** - the store version picker reported success even when the pipeline aborted before downloading anything (failed Lua fetch, missing library choice). It now checks the actual result and shows a failure.
+
+### Improved
+
+- **CDN timeout diagnostics** - "CDN Client timed out. Retrying" now logs at warning level with the Steam connection state (connected/logged_on), so a stale anonymous CM login is identifiable in debug.log instead of looking like a dead CDN.
+- **Store download no longer stalls on Steam's CDN** - the store flow built a Steam CDN client before fetching manifests, retrying 5 times against a connection Steam stopped answering on for accounts that don't own the game. The client's result was ignored by the fetch anyway, so the construction is gone; manifests now go straight to the GMRC mirror / GitHub / ManifestHub cascade. Saves ~2 minutes of dead retries per download with missing manifests.
+- **Ryuu "File type" picker removed** - the download dialog always uses the ZIP bundle (lua + manifests), so the select is gone and the option no longer appears.
+- **ManifestHub is now the default keyless manifest source** - it is tried first (auto-opening the key generator when no valid key is cached), with the GMRC mirrors and GitHub repos as fallbacks. Skipping the key prompt once sticks for the rest of the download instead of asking per depot.
+- **Clear error when no manifest exists anywhere** - if local cache, the provider bundle (Hubcap/Ryuu/DepotBox), ManifestHub, the GMRC mirrors and the GitHub repos all come up empty, the download now stops with "Cannot download: no manifest is available for this game yet" instead of quietly finishing with 0 files. The error says to try an older build or retry later.
+- **ManifestHub key popup rewritten for beginners** - explains what ManifestHub is, that the browser should have opened the key page, that keys last 24 hours, and what happens when you leave the box empty.
+- **Windows downloads skip LumaCore's Steam handoff** - Home tab and source-picked downloads now run the same pipeline as the Store tab on every platform: manifests resolved, then SteaMidra downloads the game files itself via the native CDN downloader, falling back to DepotDownloaderMod. No more "add to library and press Update in Steam". LumaCore still gets the lua + keys so Steam accepts the install. One behavior change: picking Ryuu with a custom Branch in the Home dialog now downloads the public branch (same as Linux always did); use Download Older Version for specific branches.
+- **Downloaded manifests stay in depotcache** - the store pipeline used to delete the depotcache manifests right after DepotDownloaderMod finished, leaving Steam unable to re-read them for Verify integrity or repair (Steam can't fetch them from its own CDN anymore). The files now stay; Steam uses them locally instead. Old versions are still cleaned up when a different manifest is selected.
+
+## 6.6.7c
+
+### Fixed
+
+* Some games use the same ID for the game itself and one of its depots. This confused depot resolution and could stop the right files from being found or downloaded.
+* After a Native or DDMod download finished, Steam could still show the game's install size as 0 and prompt for an update, even though the download completed correctly.
+* Access tokens listed in a game's lua weren't being saved to SLSsteam's config.yaml, even though they were read correctly.
+* The Downloads tab's progress bar looked frozen while SFF checked already-downloaded files — the log kept showing "Verifying X/Y chunks" the whole time, but nothing moved on screen. It now updates in real time.
+* Removed the "pin this version" prompt shown after downloading an older version, since it wasn't reliable. The correct older version still installs either way.
+* The Downloads tab could show the wrong "via [source]" label for a game that was already queued from a different source.
 
 ## 6.6.7b
 

@@ -30,7 +30,7 @@ from sff.fzf import run_fzf
 from sff.network.http_utils import download_to_tempfile
 
 logger = logging.getLogger(__name__)
-from sff.lua.endpoints import get_hubcap, get_oureverday, get_ryuu, get_depotbox
+from sff.lua.endpoints import get_hubcap, get_freelua, get_ryuu, get_depotbox
 from sff.ui.prompts import prompt_confirm, prompt_file, prompt_select, prompt_text
 from sff.core.storage.settings import get_setting, set_setting
 from sff.core.strings import STEAM_WEB_API_KEY
@@ -247,8 +247,8 @@ def _depotcache_for(steam_path):
 
 
 def _download_from_endpoint(dest, app_id, source, steam_path=None, request_update=None):
-    if source == LuaEndpoint.OUREVERYDAY:
-        return get_oureverday(dest, app_id)
+    if source == LuaEndpoint.FREELUA:
+        return get_freelua(dest, app_id, depotcache=_depotcache_for(steam_path))
     if source == LuaEndpoint.HUBCAP:
         return get_hubcap(dest, app_id, depotcache=_depotcache_for(steam_path))
     if source == LuaEndpoint.RYUU:

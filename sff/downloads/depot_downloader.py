@@ -358,6 +358,57 @@ def _resolve_depot_owners(appid: str, depot_ids: list) -> dict:
     return owners
 
 
+def _find_local_manifest_bytes(depot_id: str, manifest_id: str, steam_path=None):
+    name = f"{depot_id}_{manifest_id}.manifest"
+    dirs = [MANIFESTS_TMP, Path.cwd() / "manifests"]
+    if steam_path:
+        dirs += [Path(steam_path) / "depotcache", Path(steam_path) / "config" / "depotcache"]
+    for d in dirs:
+        p = d / name
+        try:
+            if p.is_file() and p.stat().st_size > 0:
+                return p.read_bytes()
+        except OSError:
+            continue
+    return None
+
+
+def _write_ddmod_filelist(depot_id: str, manifest_id: str, key: str,
+                          dirs: list, steam_path=None, print_fn=print):
+    """Expand selected folder paths into DDMod's -filelist format (exact
+    manifest file paths, one per line). Needs the manifest decrypted locally;
+    returns None when that isn't possible and the caller falls back to the
+    full depot."""
+    raw = _find_local_manifest_bytes(depot_id, manifest_id, steam_path)
+    if not raw or not key:
+        return None
+    try:
+        from sff.downloads.native_downloader import (
+            decode_manifest, _normalize_manifest_path, _path_selected)
+        manifest = decode_manifest(raw, bytes.fromhex(key))
+    except Exception as e:
+        print_fn(Fore.YELLOW + f"DDMod filelist: manifest decode failed ({e})" + Style.RESET_ALL)
+        return None
+    prefixes = [str(d).replace("\\", "/").strip("/").lower() for d in dirs if d]
+    lines = []
+    for m in manifest.get("mappings", []):
+        if m.get("flags", 0) & 0x40:
+            continue
+        fn = str(m.get("filename") or "")
+        norm = _normalize_manifest_path(fn)
+        if norm and _path_selected(norm, prefixes):
+            lines.append(fn)
+    if not lines:
+        return None
+    out = MANIFESTS_TMP / f"{depot_id}_{manifest_id}_filelist.txt"
+    try:
+        out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError:
+        return None
+    print_fn(Fore.CYAN + f"DDMod filelist: {len(lines)} files selected" + Style.RESET_ALL)
+    return out
+
+
 def run_download(
     game_data: dict,
     selected_depots: list,
@@ -366,12 +417,20 @@ def run_download(
     print_fn=print,
     os_name: str | None = None,
     force_ddmod: bool = False,
+    file_filters: dict | None = None,
 ) -> Tuple[bool, int]:
     appid = str(game_data["appid"])
     depots = game_data.get("depots", {})
     manifests = dict(game_data.get("manifests", {}) or {})
     installdir = game_data.get("installdir") or f"App_{appid}"
     target_os = (os_name or "windows").lower()
+    # Selective file download: file_filters maps depot id -> list of selected
+    # folder paths ("" = whole depot, so no filtering for that depot).
+    file_filters = {str(k): [p for p in (v or []) if p] for k, v in (file_filters or {}).items()}
+    file_filters = {k: v for k, v in file_filters.items() if v}
+
+    def _native_include_dirs(depot_id_str):
+        return file_filters.get(depot_id_str) or None
 
     # Auto-fill manifests from the staging dir for any selected depot
     # the caller did not pin a manifest for. The staging dir is what
@@ -472,12 +531,14 @@ def run_download(
                     mf = MANIFESTS_TMP / f"{depot_id_str}_{manifest_id}.manifest"
                     if mf.exists():
                         manifest_path = mf
+                    _inc = _native_include_dirs(depot_id_str)
                     ok, size = _native_dl(
                         depot_owners.get(depot_id_str) or appid, depot_id_str, manifest_id, key, download_dir,
                         print_fn=print_fn, os_filter=target_os,
                         steam_path=steam_path,
                         manifest_path=manifest_path,
                         cancel_app_id=appid,
+                        include_dirs=_inc,
                     )
                     if ok:
                         print_fn(Fore.GREEN + f"Depot {depot_id_str} downloaded ({size:,} bytes)" + Style.RESET_ALL)
@@ -590,6 +651,26 @@ def run_download(
             # anonymously without a valid session.
             cmd += ["-manifest", str(manifest_id), "-manifestfile", str(manifest_file)]
 
+        # Selective file download for DDMod: -filelist wants concrete file
+        # paths, so expand the folder selection through the decrypted
+        # manifest. If the manifest isn't local yet, fall back to the whole
+        # depot rather than silently skipping the selection.
+        if file_filters.get(depot_id_str) and manifest_id:
+            _kd = depots.get(depot_id_str, {})
+            _key = _kd.get("key", "") if isinstance(_kd, dict) else ""
+            _fl = _write_ddmod_filelist(
+                depot_id_str, manifest_id, _key, file_filters[depot_id_str],
+                steam_path=steam_path, print_fn=print_fn)
+            if _fl:
+                cmd += ["-filelist", str(_fl)]
+            else:
+                print_fn(
+                    Fore.YELLOW
+                    + f"Depot {depot_id_str}: file selection could not be "
+                    "applied here - downloading the full depot."
+                    + Style.RESET_ALL
+                )
+
         print_fn(
             Fore.CYAN
             + f"\n--- Downloading depot {depot_id_str} ({i + 1}/{total_depots}) ---"
@@ -603,6 +684,11 @@ def run_download(
         max_retries = 2
         attempt = 0
         depot_ok = False
+        # DDMod exits 0 even when it downloaded nothing (e.g. the manifest
+        # was never fetched). Measure bytes on disk around this depot's
+        # run so a 0-byte depot can't be reported as a success.
+        _bytes_before = _calculate_dir_size(download_dir)
+
         while attempt <= max_retries and not depot_ok:
             attempt += 1
             if attempt > 1:
@@ -660,12 +746,36 @@ def run_download(
                         continue
                     all_ok = False
                 else:
-                    depot_ok = True
-                    print_fn(
-                        Fore.GREEN
-                        + f"Depot {depot_id_str} downloaded successfully."
-                        + Style.RESET_ALL
-                    )
+                    # Exit 0 means nothing when Steam won't serve manifests:
+                    # DDMod prints "missing public subsection" and exits 0
+                    # with zero bytes written (war story: app 3438850,
+                    # depot 3438850, "downloaded successfully" after a 4s
+                    # no-op). A depot running with no pinned manifest can't
+                    # validate anything, so zero new bytes = delivered
+                    # nothing. With a manifest, 0 new bytes is just -validate
+                    # passing, which is a legitimate success.
+                    _after = _calculate_dir_size(download_dir)
+                    if _after == _bytes_before and not manifest_id:
+                        print_fn(
+                            Fore.YELLOW
+                            + f"Depot {depot_id_str} exited cleanly but had no manifest "
+                              "and wrote 0 new bytes — treating as failed."
+                            + Style.RESET_ALL
+                        )
+                        logger.warning(
+                            "DDMod depot %s (app %s): exit 0, no manifest, 0 new bytes — marking failed",
+                            depot_id_str, appid,
+                        )
+                        if attempt <= max_retries:
+                            continue
+                        all_ok = False
+                    else:
+                        depot_ok = True
+                        print_fn(
+                            Fore.GREEN
+                            + f"Depot {depot_id_str} downloaded successfully."
+                            + Style.RESET_ALL
+                        )
 
             except FileNotFoundError:
                 print_fn(

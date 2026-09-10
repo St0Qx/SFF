@@ -62,7 +62,7 @@ def _load():
                     "id": str(e.get("id") or uuid.uuid4()),
                     "app_id": str(e.get("app_id")),
                     "name": str(e.get("name") or ""),
-                    "source": str(e.get("source") or "oureveryday"),
+                    "source": str(e.get("source") or "freelua"),
                     "state": e.get("state") if e.get("state") in (
                         STATE_QUEUED, STATE_DOWNLOADING, STATE_DONE, STATE_FAILED
                     ) else STATE_QUEUED,
@@ -88,7 +88,7 @@ def _save(items):
         logger.debug("download queue save failed: %s", e)
 
 
-def enqueue(app_id, name="", source="oureveryday"):
+def enqueue(app_id, name="", source="freelua"):
     """Add an app to the queue. Returns the item dict, or None when the
     app is already queued/downloading."""
     app_id = str(app_id).strip()
@@ -102,7 +102,7 @@ def enqueue(app_id, name="", source="oureveryday"):
         "id": uuid.uuid4().hex,
         "app_id": app_id,
         "name": str(name or "").strip() or f"App {app_id}",
-        "source": str(source or "oureveryday"),
+        "source": str(source or "freelua"),
         "state": STATE_QUEUED,
         "added_at": time.time(),
         "started_at": None,
@@ -379,7 +379,7 @@ def pause_item(item_id):
     return None
 
 
-def pause_by_app_id(app_id, name="", source="oureveryday"):
+def pause_by_app_id(app_id, name="", source="freelua"):
     """Pause a running download by app id, creating the queue entry when
     the download was started directly (not through the queue). The engine
     stop is async: mark_finished flips the item to queued+paused once the
@@ -396,7 +396,7 @@ def pause_by_app_id(app_id, name="", source="oureveryday"):
             "id": uuid.uuid4().hex,
             "app_id": app_id,
             "name": str(name or "").strip() or f"App {app_id}",
-            "source": str(source or "oureveryday"),
+            "source": str(source or "freelua"),
             "state": STATE_DOWNLOADING,
             "added_at": time.time(),
             "started_at": time.time(),

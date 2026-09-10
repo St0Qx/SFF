@@ -395,6 +395,11 @@ def _normalize_manifest_path(filename: str) -> str | None:
     return "/".join(parts)
 
 
+def _path_selected(norm: str, include_dirs: list[str]) -> bool:
+    norm_l = norm.lower()
+    return any(norm_l == d or norm_l.startswith(d + "/") for d in include_dirs)
+
+
 def download_depot(
     app_id: int | str,
     depot_id: int | str,
@@ -408,6 +413,7 @@ def download_depot(
     manifest_bytes: bytes | None = None,
     manifest_path: Path | str | None = None,
     cancel_app_id: int | str | None = None,
+    include_dirs: list[str] | None = None,
 ) -> tuple[bool, int]:
     """Download one Steam depot directly from CDN (no .NET).
 
@@ -501,6 +507,21 @@ def download_depot(
         return False, 0
 
     mappings = manifest.get("mappings", [])
+    # Lowercase normalized include-paths for the selective-download filter.
+    # Empty list = everything selected; None = filter not active.
+    _inc_dirs = None
+    if include_dirs is not None:
+        _inc_dirs = [_normalize_manifest_path(p) for p in include_dirs]
+        _inc_dirs = [p.lower() for p in _inc_dirs if p]
+        kept = [m for m in mappings
+                if _normalize_manifest_path(m.get("filename", ""))
+                and _path_selected(_normalize_manifest_path(m["filename"]), _inc_dirs)]
+        if not kept:
+            client.disconnect()
+            print_fn("[native] File selection matched no files in this depot - nothing to download")
+            return False, 0
+        mappings = kept
+        print_fn(f"[native] Selective download: {len(mappings)} of the depot's files selected")
     total_chunks = sum(len(m.get("chunks", [])) for m in mappings)
     total_size = sum(m.get("size", 0) for m in mappings)
     print_fn(f"[native] {len(mappings)} files, {total_chunks} chunks, {total_size:,} bytes")

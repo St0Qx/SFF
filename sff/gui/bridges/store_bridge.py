@@ -1561,31 +1561,39 @@ def _bridge_search_games(bridge, query, offset, per_page, sort_by='updated', tag
 
 
 def _bridge_connect_store(bridge, api_key):
-    """Validates and stores Hubcap API key."""
+    """Validates and stores Hubcap API key. The validation is a live HTTPS
+    call to Hubcap, so it runs on a worker thread: on the GUI thread a slow
+    or unreachable Hubcap froze the whole window until the request timed
+    out."""
     if not api_key or not api_key.strip():
         bridge._emit_task_result("store_connect", False, "API key is empty")
         return
-    from sff.network.store_browser import StoreApiClient
-    ok, reason = StoreApiClient.validate_api_key(api_key)
-    if not ok:
-        msg = {
-            "invalid": "API key rejected by Hubcap. Check your key or try again.",
-            "server": "Hubcap is having server trouble right now. Your key was not checked; try again in a few minutes.",
-            "network": "Cannot reach Hubcap. Check your internet connection and try again.",
-        }.get(reason, "API key validation failed.")
-        bridge._emit_task_result("store_connect", False, msg)
-        return
-    bridge._api_key = api_key
-    bridge._store_client = StoreApiClient(api_key)
-    bridge._hubcap_unavailable = False
-    from sff.core.storage.settings import set_setting, clear_setting
-    from sff.core.structs import Settings
-    set_setting(Settings.HUBCAP_KEY, api_key)
-    try:
-        clear_setting(Settings.HUBCAP_DISABLED)
-    except Exception:
-        pass
-    bridge.task_finished.emit(json.dumps({"task": "api_key_connected"}))
+
+    def _do():
+        from sff.network.store_browser import StoreApiClient
+        ok, reason = StoreApiClient.validate_api_key(api_key)
+        if not ok:
+            msg = {
+                "invalid": "API key rejected by Hubcap. Check your key or try again.",
+                "server": "Hubcap is having server trouble right now. Your key was not checked; try again in a few minutes.",
+                "network": "Cannot reach Hubcap. Check your internet connection and try again.",
+            }.get(reason, "API key validation failed.")
+            bridge._emit_task_result("store_connect", False, msg)
+            return
+        bridge._api_key = api_key
+        bridge._store_client = StoreApiClient(api_key)
+        bridge._hubcap_unavailable = False
+        from sff.core.storage.settings import set_setting, clear_setting
+        from sff.core.structs import Settings
+        set_setting(Settings.HUBCAP_KEY, api_key)
+        try:
+            clear_setting(Settings.HUBCAP_DISABLED)
+        except Exception:
+            pass
+        bridge.task_finished.emit(json.dumps({"task": "api_key_connected"}))
+
+    bridge._run_async(_do, on_done=lambda r: None,
+                      on_error=lambda e: bridge._emit_task_result("store_connect", False, str(e)))
 
 
 def _bridge_store_disconnect(bridge):

@@ -163,6 +163,7 @@ window.Store = (function() {
                 _selectMode = !_selectMode;
                 selectModeBtn.classList.toggle('active', _selectMode);
                 if (selectBar) selectBar.classList.toggle('hidden', !_selectMode);
+                if (_selectMode && window._applySourceAutoPick) window._applySourceAutoPick('store-select-source');
                 if (!_selectMode) _selection = {};
                 _applySelectionState();
             });
@@ -194,7 +195,7 @@ window.Store = (function() {
                     return;
                 }
                 var sourceEl = document.querySelector('input[name="store-select-source"]:checked');
-                var source = sourceEl ? sourceEl.value : 'oureveryday';
+                var source = sourceEl ? sourceEl.value : 'freelua';
                 Bridge.call('download_queue_enqueue', JSON.stringify(entries), source);
                 Components.showToast('info', 'Adding ' + entries.length + ' game(s) to the download queue...');
                 _selection = {};

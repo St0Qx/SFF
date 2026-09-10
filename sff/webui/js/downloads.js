@@ -56,7 +56,18 @@ window.Downloads = (function() {
                 var data = JSON.parse(json);
                 if (!data.app_id) return;
                 var it = _get(data.app_id);
-                if (it.status === 'cancelled' || it.status === 'done') return;
+                // A finished run's row must not swallow the next run's
+                // events: re-downloading the same app kept showing the old
+                // 'done' in History while the new download ran invisibly.
+                // Every download path opens with a progress-0 setup event;
+                // late events from the previous run carry > 0 or 'Complete'.
+                if ((it.status === 'done' || it.status === 'cancelled') &&
+                        data.progress === 0 && typeof data.status === 'string' &&
+                        data.status !== 'Complete') {
+                    it.status = 'downloading';
+                    it.error = '';
+                    it.timestamp = Date.now();
+                } else if (it.status === 'cancelled' || it.status === 'done') return;
                 if (data.name) it.name = data.name;
                 if (data.status) it.statusText = data.status;
                 if (typeof data.progress === 'number' && data.progress >= 0) {
@@ -81,6 +92,7 @@ window.Downloads = (function() {
                 else if (data.cancelled) it.status = 'cancelled';
                 else if (data.success) { it.status = 'done'; it.progress = 100; }
                 else it.status = 'failed';
+                if (!data.success && data.message) it.error = data.message;
                 it.timestamp = Date.now();
                 _trim();
                 _render();
@@ -119,7 +131,7 @@ window.Downloads = (function() {
                     var it = _get(pbtn.dataset.pauseAppid);
                     it.pendingPause = true;
                     _render();
-                    Bridge.call('download_pause_active', it.app_id, it.name, it.source || 'oureveryday');
+                    Bridge.call('download_pause_active', it.app_id, it.name, it.source || 'freelua');
                     return;
                 }
                 var cbtn = e.target.closest('[data-cancel-appid]');
@@ -287,7 +299,7 @@ window.Downloads = (function() {
             : '';
         var progressHtml = (it.status === 'cancelled' || it.status === 'done') ? '' :
             '<div class="queue-pct" style="font-size:11px;opacity:0.6;">' + Math.round(it.progress || 0) + '%</div>' +
-            '<div class="queue-status" style="font-size:11px;opacity:0.7;"></div>';
+            '<div class="queue-status" style="font-size:11px;opacity:0.7;">' + Components.escapeHtml(it.statusText || '') + '</div>';
         row.innerHTML =
             '<div class="download-info" style="flex:1;">' +
                 '<div class="download-name"><span class="download-name-text">' + Components.escapeHtml(it.name) + '</span>' +

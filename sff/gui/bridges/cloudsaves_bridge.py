@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -348,16 +349,53 @@ def _bridge_gdrive_authorize(bridge):
 
     bridge._run_async(_do, on_done=_on_done)
 
+_GD_POOL = _concurrent.ThreadPoolExecutor(max_workers=1)
+
+
 def _bridge_gdrive_status(bridge):
-    """Return GDrive connection status as JSON (synchronous)."""
-    from sff.cloud.google_drive import is_available, is_authenticated, get_service, get_user_email
+    """Return GDrive connection status as JSON (synchronous).
+
+    get_service() refreshes the OAuth token and get_user_email() calls
+    Google's about() endpoint - both can hang for tens of seconds on a
+    slow or offline network. They run on a worker with a 2s deadline so
+    the GUI thread never freezes; the email fills a short-lived cache on
+    a later call once the worker finishes."""
+    from sff.cloud.google_drive import is_available, is_authenticated
     if not is_available():
         return json.dumps({"available": False, "connected": False, "email": ""})
     if not is_authenticated():
         return json.dumps({"available": True, "connected": False, "email": ""})
-    svc = get_service()
-    email = get_user_email(svc) if svc else ""
-    return json.dumps({"available": True, "connected": bool(svc), "email": email})
+    cache = getattr(bridge, "_gdrive_email_cache", None)
+    if cache and time.monotonic() - cache[0] < 300.0:
+        return json.dumps({"available": True, "connected": True, "email": cache[1]})
+
+    def _probe():
+        from sff.cloud.google_drive import get_service, get_user_email
+        svc = get_service()
+        return get_user_email(svc) if svc else ""
+
+    try:
+        fut = _GD_POOL.submit(_probe)
+    except RuntimeError:
+        return json.dumps({"available": True, "connected": True, "email": ""})
+
+    def _store(f):
+        try:
+            bridge._gdrive_email_cache = (time.monotonic(), f.result())
+        except Exception:
+            pass
+
+    fut.add_done_callback(_store)
+    try:
+        email = fut.result(timeout=2.0)
+        bridge._gdrive_email_cache = (time.monotonic(), email)
+        return json.dumps({"available": True, "connected": True, "email": email})
+    except _concurrent.TimeoutError:
+        # connected stays True: auth is cached locally, only the email
+        # probe is still in flight
+        return json.dumps({"available": True, "connected": True, "email": ""})
+    except Exception:
+        return json.dumps({"available": True, "connected": True, "email": ""})
 
 # ── All Save Locations ────────────────────────────────────────
 

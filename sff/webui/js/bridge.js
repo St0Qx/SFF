@@ -41,7 +41,8 @@ window.Bridge = (function() {
             'log_message',
             'lc_progress',
             'game_branches_ready',
-            'download_queue_state'
+            'download_queue_state',
+            'depot_filetree_results'
         ];
         signalNames.forEach(function(name) {
             if (_py[name] && typeof _py[name].connect === 'function') {

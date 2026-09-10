@@ -18,7 +18,6 @@
 
 """API endpoints are in here"""
 
-import asyncio
 import io
 import json
 import logging
@@ -29,9 +28,8 @@ import httpx
 
 from colorama import Fore, Style
 
-from sff.network.http_utils import download_to_tempfile, get_request
-from sff.lua.generator import LuaDlc, render_grouped_lua
-from sff.lua.provider import download_provider_update, load_provider, update_cache_from_lua_bytes
+from sff.network.http_utils import download_to_tempfile
+from sff.lua.provider import load_provider, update_cache_from_lua_bytes
 from sff.ui.prompts import prompt_confirm, prompt_secret, prompt_select
 from sff.core.storage.settings import get_setting, set_setting
 from sff.core.structs import Settings
@@ -39,302 +37,11 @@ from sff.zip import read_lua_from_zip
 
 logger = logging.getLogger(__name__)
 
-_PROVIDER_CACHE: dict | None = None
-
-
-def _cached_provider():
-    global _PROVIDER_CACHE
-    if _PROVIDER_CACHE is None:
-        _PROVIDER_CACHE = load_provider()
-    return _PROVIDER_CACHE
-
-
-_REVO_PATTERN = re.compile(
-    r'addappid\(\s*(\d+)\s*,\s*[01]\s*,\s*["\']([0-9a-fA-F]{64})["\']\s*\)'
-)
-
-
 def _update_fallback_depotkeys(lua_bytes):
     try:
         update_cache_from_lua_bytes(lua_bytes)
     except Exception:
         pass
-
-
-def _provider_key_map() -> dict[str, str]:
-    out: dict[str, str] = {}
-    for depot_id, entry in _cached_provider().items():
-        if isinstance(entry, dict):
-            key = str(entry.get("key") or "")
-        else:
-            key = str(entry or "")
-        if key:
-            out[str(depot_id)] = key
-    return out
-
-
-def _count_provider_matches(depots: list[str], keys_dict: dict[str, str]) -> int:
-    return sum(1 for d in depots if keys_dict.get(d))
-
-
-def _build_lua_from_provider(app_id: str, app_name: str, depots: list[str], keys_dict: dict[str, str], dlc_app_ids: list[str], manifest_map: dict[str, str] | None = None, manifest_sizes: dict[str, int] | None = None, app_info: dict | None = None) -> str:
-    provider = _cached_provider()
-    depot_entries = []
-    empty_depots = []
-    for depot_id in depots:
-        key = keys_dict.get(depot_id)
-        if not key:
-            empty_depots.append(depot_id)
-            continue
-        meta = provider.get(depot_id) or {}
-        if isinstance(meta, str):
-            meta = {}
-        depot_entries.append({
-            "id": depot_id,
-            "key": key,
-            "name": meta.get("name") or f"Depot {depot_id}",
-            "parent_appid": meta.get("parent_appid") or str(app_id),
-            "parent_name": meta.get("parent_name") or app_name,
-            "manifest_id": (manifest_map or {}).get(depot_id, ""),
-            "manifest_size": (manifest_sizes or {}).get(depot_id, 0),
-        })
-    dlcs: list[LuaDlc] = []
-    _dlc_names: dict[str, str] = {}
-    _dlc_tokens: dict[str, str] = {}
-    try:
-        depots_info = (app_info or {}).get("depots", {})
-        if isinstance(depots_info, dict):
-            for _did, _dmeta in depots_info.items():
-                if not isinstance(_dmeta, dict):
-                    continue
-                _da = _dmeta.get("dlcappid")
-                if _da:
-                    _name = str(_dmeta.get("name") or "")
-                    _token = str(_dmeta.get("apptoken") or "")
-                    _dlc_names[str(_da)] = _name
-                    if _token:
-                        _dlc_tokens[str(_da)] = _token
-    except Exception:
-        pass
-    for dlc_id in dlc_app_ids:
-        dlcs.append(LuaDlc(
-            str(dlc_id),
-            name=_dlc_names.get(dlc_id, ""),
-            token=_dlc_tokens.get(dlc_id, ""),
-        ))
-    result = render_grouped_lua(app_id, app_name, depot_entries, manifest_map or {}, dlcs)
-    if empty_depots:
-        result += "\n-- EMPTY DEPOTS (no content on any branch)\n"
-        for ed in sorted(empty_depots):
-            result += f"-- addappid({ed}) -- Depot {ed} (empty depot)\n"
-    return result
-
-
-def get_oureverday(dest, app_id):
-    import json
-    import httpx as _httpx
-    from sff.network.steam_client import create_provider_for_current_thread
-
-    if not app_id or not str(app_id).strip().isdigit():
-        print(Fore.RED + f"Invalid App ID: '{app_id}'" + Style.RESET_ALL)
-        return None
-
-    # Try cached Lua first — avoids re-fetching Steam CM and provider
-    # keys on every download. The caller (download_lua_direct) targets
-    # <cwd>/saved_lua/, and _run_windows_fastest copies the result back
-    # there, so a subsequent download of the same app_id hits the cache.
-    lua_path = Path(dest) / f"{app_id}.lua"
-    if lua_path.exists() and lua_path.stat().st_size > 0:
-        print(Fore.GREEN + f"[Cached] Using existing Lua for {app_id}" + Style.RESET_ALL)
-        return lua_path
-
-    # Step 1: Steam native query for depot IDs
-    print(Fore.CYAN + f"[Step 1] Fetching depot list for {app_id} from Steam client..." + Style.RESET_ALL)
-    try:
-        # Build the SteamClient INSIDE the executor task. SteamClient binds
-        # gevent's hub to whichever OS thread constructed it, so if we make
-        # the client out here and then submit() get_single_app_info, the
-        # executor thread has no hub for that client and gevent fires
-        # "This operation would block forever". Building it inside keeps
-        # the client + the hub on the same thread.
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FT
-        def _fetch_app_info():
-            from sff.network.steam_client import create_provider_for_current_thread as _mk
-            _provider = _mk()
-            # Quick mode: single bounded attempt, no re-login escalation —
-            # a stuck shared Steam lock must never stall a download for
-            # minutes (the executor also never waits on shutdown).
-            app_data = _provider.get_single_app_info(int(app_id), quick=True)
-            depot_keys = [
-                d for d in app_data.get("depots", {}).keys() if str(d).isdigit()
-            ]
-            if not depot_keys:
-                # Stale/partial cache entry (e.g. an old CM payload with
-                # branches but no depots) — drop it and refetch so the
-                # SteamCMD mirror fills the full appinfo.
-                _provider.invalidate_app(int(app_id))
-                app_data = _provider.get_single_app_info(int(app_id), quick=True)
-            return app_data
-        app_info = None
-        _ex = ThreadPoolExecutor(max_workers=1)
-        try:
-            _fut = _ex.submit(_fetch_app_info)
-            app_info = _fut.result(timeout=45)
-        except _FT:
-            print(Fore.RED + f"Steam app-info timed out for {app_id} (CM probably down)." + Style.RESET_ALL)
-            return None
-        finally:
-            _ex.shutdown(wait=False)
-        if not app_info:
-            print(Fore.RED + f"Failed to query Steam App Info for {app_id}." + Style.RESET_ALL)
-            return None
-        depots = [d for d in app_info.get("depots", {}).keys() if d.isdigit()]
-    except Exception as e:
-        print(Fore.RED + f"Steam query failed while checking depots: {e}" + Style.RESET_ALL)
-        return None
-
-    if not depots:
-        print(Fore.RED + f"No valid depots exist on Steam for this App ID." + Style.RESET_ALL)
-        return None
-
-    # Pull latest manifest GIDs from Steam app info so we can write
-    # setManifestid lines into the generated Lua.
-    manifest_map: dict[str, str] = {}
-    manifest_sizes: dict[str, int] = {}
-    for depot_id in depots:
-        depot_info = app_info.get("depots", {}).get(depot_id, {})
-        manifests = depot_info.get("manifests", {})
-        public = manifests.get("public", {}) if isinstance(manifests, dict) else {}
-        gid = str(public.get("gid", ""))
-        if gid and gid.isdigit():
-            manifest_map[depot_id] = gid
-            size = public.get("size")
-            if isinstance(size, (int, str)) and str(size).isdigit():
-                manifest_sizes[depot_id] = int(size)
-
-    # Pull every DLC app id Steam reports for this game from extended.listofdlc.
-    # These are DLCs with no depot of their own (cosmetic, soundtrack, in-game
-    # currency, etc) — the keyed addappid(depot, 1, "key") lines won't cover
-    # them because they have no depot_id. Adding plain addappid(<dlc_id>) lines
-    # tells LumaCore to mark them as owned without any depot data.
-    dlc_app_ids: list[str] = []
-    try:
-        listofdlc = (
-            app_info.get("extended", {}).get("listofdlc", "")
-            if isinstance(app_info.get("extended"), dict) else ""
-        )
-        if isinstance(listofdlc, str) and listofdlc.strip():
-            dlc_app_ids = [
-                x.strip()
-                for x in listofdlc.split(",")
-                if x.strip().isdigit()
-            ]
-    except Exception:
-        dlc_app_ids = []
-
-    # Step 2: Bundled local key database
-    print(Fore.CYAN + f"[Step 2] Loading bundled key database..." + Style.RESET_ALL)
-    keys_dict = _provider_key_map()
-    if keys_dict:
-        print(Fore.GREEN + f"[OK] Loaded provider key database ({len(keys_dict):,} keyed entries)." + Style.RESET_ALL)
-    else:
-        print(Fore.YELLOW + f"Provider key database not found or contains no keys." + Style.RESET_ALL)
-
-    # Generate the Lua File Dynamically
-    found = _count_provider_matches(depots, keys_dict)
-
-    if found < len(depots):
-        missing = len(depots) - found
-        print(
-            Fore.YELLOW
-            + f"Provider is missing {missing} depot key(s). Refreshing provider once..."
-            + Style.RESET_ALL
-        )
-        try:
-            update_result = download_provider_update(timeout=20.0)
-            if update_result.get("ok"):
-                global _PROVIDER_CACHE
-                _PROVIDER_CACHE = None
-                print(
-                    Fore.GREEN
-                    + f"[OK] Provider refreshed from {update_result.get('url', '')} "
-                      f"({update_result.get('count', 0):,} entries)."
-                    + Style.RESET_ALL
-                )
-                keys_dict = _provider_key_map()
-                found = _count_provider_matches(depots, keys_dict)
-            else:
-                print(
-                    Fore.YELLOW
-                    + "Provider refresh did not complete: "
-                    + "; ".join(update_result.get("errors") or [])
-                    + Style.RESET_ALL
-                )
-        except Exception as exc:
-            print(Fore.YELLOW + f"Provider refresh failed ({exc})." + Style.RESET_ALL)
-
-    if found == 0:
-        print(Fore.RED + f"No known keys found in any database for {app_id}." + Style.RESET_ALL)
-        # Step 3: revobd.club — parse keys and inject into keys_dict (last resort)
-        print(Fore.CYAN + f"[Step 3] Trying revobd.club pre-built Lua archive..." + Style.RESET_ALL)
-        # _REVO_PATTERN is defined at module level
-        try:
-            revo_resp = _httpx.get(
-                f"https://api.luagen.revobd.club/{app_id}.zip",
-                timeout=20,
-                follow_redirects=True,
-            )
-            if revo_resp.status_code == 200 and revo_resp.content:
-                lua_bytes = read_lua_from_zip(io.BytesIO(revo_resp.content), decode=False)
-                if lua_bytes:
-                    revo_keys = dict(_REVO_PATTERN.findall(lua_bytes.decode("utf-8", errors="ignore")))
-                    injected = 0
-                    for d in depots:
-                        if d not in keys_dict and d in revo_keys:
-                            keys_dict[d] = revo_keys[d]
-                            injected += 1
-                    if injected > 0:
-                        print(Fore.GREEN + f"\u2705 revobd.club: Injected {injected} key(s) for {app_id}" + Style.RESET_ALL)
-                        found = 0
-                        for d in depots:
-                            if keys_dict.get(d):
-                                found += 1
-                        if found > 0:
-                            # Append every depotless DLC the game declares so
-                            # LumaCore marks them as owned alongside the keyed
-                            # depots above.
-                            lua_path = dest / f"{app_id}.lua"
-                            lua_path.write_text(
-                                _build_lua_from_provider(app_id, app_info.get("common", {}).get("name", ""), depots, keys_dict, dlc_app_ids, manifest_map, manifest_sizes, app_info),
-                                encoding="utf-8",
-                            )
-                            print(Fore.GREEN + f"\u2705 Built Lua for {app_id} using revobd.club keys ({found} depot(s))" + Style.RESET_ALL)
-                            return lua_path
-            print(Fore.YELLOW + f"revobd.club: No usable keys for {app_id} (HTTP {revo_resp.status_code})." + Style.RESET_ALL)
-        except Exception as e:
-            print(Fore.YELLOW + f"revobd.club unreachable ({e})." + Style.RESET_ALL)
-        return None
-
-    # Append every depotless DLC the game declares so LumaCore marks them as
-    # owned alongside the keyed depots above. Skipping the base appid and any
-    # id that already appears as a depot avoids duplicates.
-    appended_dlcs = len([d for d in dlc_app_ids if d != str(app_id) and d not in depots])
-
-    lua_path = dest / f"{app_id}.lua"
-    with lua_path.open("w", encoding="utf-8") as f:
-        f.write(_build_lua_from_provider(app_id, app_info.get("common", {}).get("name", ""), depots, keys_dict, dlc_app_ids, manifest_map, manifest_sizes, app_info))
-
-    try:
-        from sff.lua.dlc_appid_enricher import append_depotless_dlcs
-        append_depotless_dlcs(lua_path, app_id)
-    except Exception:
-        pass
-
-    if appended_dlcs:
-        print(Fore.GREEN + f"[OK] Built custom Lua for {app_id} (Resolved {found} keys natively, +{appended_dlcs} DLC appid(s))" + Style.RESET_ALL)
-    else:
-        print(Fore.GREEN + f"[OK] Built custom Lua for {app_id} (Resolved {found} keys natively)" + Style.RESET_ALL)
-    return lua_path
 
 
 def get_hubcap(dest, app_id, depotcache = None, hubcap_key = None):
@@ -657,6 +364,186 @@ def _ryuu_save_lua(lua_bytes, dest, app_id):
         pass
     print(Fore.GREEN + f"[OK] Ryuu: Downloaded Lua for {app_id}" + Style.RESET_ALL)
     return lua_path
+
+
+_TRIONINE_KEYS_URL = "https://raw.githubusercontent.com/fylsdy/ManifestHub/main/depotkeys.json"
+_TRIONINE_MANIFEST_REPO = "qwe213312/k25FCdfEOoEJ42S6"
+_MH_BRANCH_REPOS = (
+    ("steamtoolsapp/ManifestHub", "ManifestHub"),
+    ("steamtools-games/ManifestHub3", "ManifestHub3"),
+)
+
+
+def _trionine_depotkeys(max_age: float = 24 * 3600) -> dict[str, str]:
+    import time
+    from sff.lua.provider import cache_dir
+    path = cache_dir() / "trionine_depotkeys.json"
+    try:
+        if path.exists() and (time.time() - path.stat().st_mtime) < max_age:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data:
+                return {str(k): v for k, v in data.items() if isinstance(v, str) and v}
+    except Exception:
+        logger.debug("trionine key cache read failed", exc_info=True)
+    try:
+        resp = httpx.get(_TRIONINE_KEYS_URL, timeout=60, follow_redirects=True)
+        if resp.status_code != 200:
+            return {}
+        data = resp.json()
+    except Exception:
+        logger.debug("trionine key fetch failed", exc_info=True)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out = {str(k): v for k, v in data.items() if isinstance(v, str) and v}
+    try:
+        path.write_text(json.dumps(out), encoding="utf-8")
+    except Exception:
+        logger.debug("trionine key cache write failed", exc_info=True)
+    return out
+
+
+def _steamcmd_appinfo(app_id):
+    try:
+        resp = httpx.get(
+            f"https://api.steamcmd.net/v1/info/{app_id}",
+            timeout=30, follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if data.get("status") == "success":
+            return (data.get("data") or {}).get(str(app_id))
+    except Exception:
+        logger.debug("steamcmd appinfo fetch failed", exc_info=True)
+    return None
+
+
+def _seed_free_manifest(depot_id, gid, app_id, depotcache):
+    # Pull the real .manifest bytes off the three keyless mirrors (first 200
+    # wins) into depotcache + staging, so downloads and the depot file
+    # explorer never need the GMRC cascade for these depots.
+    urls = (
+        f"https://raw.githubusercontent.com/{_TRIONINE_MANIFEST_REPO}/main/{depot_id}_{gid}.manifest",
+        f"https://raw.githubusercontent.com/steamtoolsapp/ManifestHub/{app_id}/{depot_id}_{gid}.manifest",
+        f"https://raw.githubusercontent.com/steamtools-games/ManifestHub3/{app_id}/{depot_id}_{gid}.manifest",
+    )
+    targets = []
+    if depotcache is not None:
+        targets.append(Path(depotcache) / f"{depot_id}_{gid}.manifest")
+    try:
+        from sff.core.utils import manifests_staging_dir
+        targets.append(manifests_staging_dir() / f"{depot_id}_{gid}.manifest")
+    except Exception:
+        pass
+    if not targets:
+        return
+    for url in urls:
+        try:
+            resp = httpx.get(url, timeout=20, follow_redirects=True)
+        except Exception:
+            continue
+        if resp.status_code == 200 and resp.content:
+            for t in targets:
+                try:
+                    t.parent.mkdir(parents=True, exist_ok=True)
+                    t.write_bytes(resp.content)
+                except Exception:
+                    logger.debug("manifest seed write failed for %s", t, exc_info=True)
+            return
+
+
+def get_freelua(dest, app_id, depotcache=None):
+    """Keyless Lua from the free community providers, in priority order:
+    trionine ManifestHub (built client-side from depotkeys.json + steamcmd
+    gids, like the site itself), revobd pre-built bundle (ships .manifest
+    files), then the ManifestHub / ManifestHub3 per-app git branches.
+    Any bundled manifests are seeded into depotcache along the way."""
+    if not app_id or not str(app_id).strip().isdigit():
+        print(Fore.RED + f"Invalid App ID: '{app_id}'" + Style.RESET_ALL)
+        return None
+    app_id = str(app_id)
+    lua_path = Path(dest) / f"{app_id}.lua"
+    if lua_path.exists() and lua_path.stat().st_size > 0:
+        print(Fore.GREEN + f"[Cached] Using existing Lua for {app_id}" + Style.RESET_ALL)
+        return lua_path
+
+    # 1) trionine: depot keys from the shared dump, live gids from steamcmd
+    info = _steamcmd_appinfo(app_id)
+    if info:
+        depots_info = info.get("depots") or {}
+        depots = sorted(str(d) for d in depots_info if str(d).isdigit())
+        keys = _trionine_depotkeys() if depots else {}
+        # The bundled/local key DB (fallback_depotkeys.json + contributed
+        # keys) covers games the shared dump is missing.
+        if depots and any(not keys.get(d) for d in depots):
+            try:
+                for d, entry in load_provider().items():
+                    k = entry.get("key") if isinstance(entry, dict) else entry
+                    if d not in keys and k:
+                        keys[str(d)] = str(k)
+            except Exception:
+                logger.debug("freelua local key DB load failed", exc_info=True)
+        lines = [f"addappid({app_id})"]
+        pins = {}
+        if keys:
+            for depot_id in depots:
+                key = keys.get(depot_id)
+                if not key:
+                    continue
+                lines.append(f'addappid({depot_id},0,"{key}")')
+                mani = (depots_info.get(depot_id) or {}).get("manifests") or {}
+                pub = mani.get("public") if isinstance(mani.get("public"), dict) else None
+                gid = str((pub or {}).get("gid") or "")
+                if gid.isdigit():
+                    lines.append(f'setManifestid({depot_id},"{gid}")')
+                    pins[depot_id] = gid
+            for dlc in re.split(r"[,;\s]+", str((info.get("extended") or {}).get("listofdlc", ""))):
+                if dlc.isdigit() and dlc != app_id and dlc not in depots:
+                    lines.append(f"addappid({dlc})")
+        if sum(1 for l in lines if ',0,"' in l) > 0:
+            lua_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            _update_fallback_depotkeys(lua_path.read_bytes())
+            for d, g in pins.items():
+                _seed_free_manifest(d, g, app_id, depotcache)
+            print(Fore.GREEN + f"[OK] Free Providers: trionine data built Lua for {app_id} ({len(pins)} pinned manifest(s))" + Style.RESET_ALL)
+            return lua_path
+
+    # 2) revobd: pre-built zip with the lua + real manifest files
+    try:
+        resp = httpx.get(
+            f"https://api.luagen.revobd.club/{app_id}.zip",
+            timeout=30, follow_redirects=True,
+        )
+        if resp.status_code == 200 and resp.content:
+            text = read_lua_from_zip(io.BytesIO(resp.content), decode=True, depotcache=depotcache)
+            if text:
+                lua_path.write_text(text, encoding="utf-8")
+                print(Fore.GREEN + f"[OK] Free Providers: revobd bundle for {app_id} (manifests included)" + Style.RESET_ALL)
+                return lua_path
+    except Exception as e:
+        print(Fore.YELLOW + f"revobd bundle unreachable ({e})." + Style.RESET_ALL)
+
+    # 3+4) ManifestHub / ManifestHub3: one branch per app id with lua + key.vdf
+    for repo, label in _MH_BRANCH_REPOS:
+        try:
+            resp = httpx.get(
+                f"https://raw.githubusercontent.com/{repo}/{app_id}/{app_id}.lua",
+                timeout=20, follow_redirects=True,
+            )
+        except Exception:
+            continue
+        if resp.status_code != 200 or not resp.text.lstrip().startswith("addappid"):
+            continue
+        lua_path.write_text(resp.text, encoding="utf-8")
+        _update_fallback_depotkeys(resp.text.encode("utf-8", errors="ignore"))
+        for d, g in re.findall(r'setManifestid\(\s*(\d+)\s*,\s*"?(\d+)"?\s*\)', resp.text):
+            _seed_free_manifest(d, g, app_id, depotcache)
+        print(Fore.GREEN + f"[OK] Free Providers: {label} Lua for {app_id}" + Style.RESET_ALL)
+        return lua_path
+
+    print(Fore.RED + f"No free provider has App {app_id}." + Style.RESET_ALL)
+    return None
 
 
 def get_depotbox(dest, app_id, depotbox_key=None):

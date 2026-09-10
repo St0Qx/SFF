@@ -77,11 +77,11 @@ from sff.gui.bridges.download_bridge import (
     _bridge_download_game_version_native,
     _bridge_download_older_version_auto,
     _bridge_download_game_with_source,
+    _bridge_fetch_depot_filetree,
     _bridge_import_local_lua,
     _bridge_run_linux_ddmod_fallback,
     _bridge_run_linux_fastest,
     _bridge_run_local_import,
-    _bridge_run_windows_fastest,
     _bridge_show_linux_fastest_workflow_notice,
     _bridge_track_download,
     _bridge_unlock_steam_readonly
@@ -512,6 +512,7 @@ class WebBridge(QObject):
     # --- Signals (Python → JS) ---
     search_results = pyqtSignal(str)
     depot_history_results = pyqtSignal(str)
+    depot_filetree_results = pyqtSignal(str)
     download_progress = pyqtSignal(str)
     task_finished = pyqtSignal(str)
     game_branches_ready = pyqtSignal(str)
@@ -897,6 +898,9 @@ class WebBridge(QObject):
     @pyqtSlot(str, bool)
     def fetch_depot_history(self, app_id, force_refresh):
         return _bridge_fetch_depot_history(self, app_id, force_refresh)
+    @pyqtSlot(str, str, str)
+    def fetch_depot_filetree(self, app_id, depot_id, lua_path):
+        return _bridge_fetch_depot_filetree(self, app_id, depot_id, lua_path)
     @pyqtSlot(str)
     def download_game_fastest(self, app_id):
         return _bridge_download_game_fastest(self, app_id)
@@ -1023,171 +1027,6 @@ class WebBridge(QObject):
                 "app_id": app_id, "status": f"Error: {exc}", "progress": 0
             }))
             return False
-
-    def _run_windows_fastest(self, app_id, source='', request_update=False, branch='', file_type=''):
-        """Prompt-free 11-step pipeline for Windows."""
-        try:
-            from sff.lua.choices import download_lua_direct
-            from sff.lua.manager import parse_lua_contents
-            from sff.lua.writer import ACFWriter, ConfigVDFWriter
-            from sff.steam_tools_compat import install_lua_to_steam
-            from sff.core.storage.vdf import ensure_library_has_app
-            from sff.registry_access import set_stats_and_achievements
-            from sff.core.structs import LuaEndpoint
-
-            steam_path = self._steam_path
-            lib_path = Path(self._active_library) if self._active_library else steam_path
-
-            # Step 1: download lua
-            self.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Downloading Lua", "progress": 10
-            }))
-            if source == "hubcap":
-                selected_source = LuaEndpoint.HUBCAP
-            elif source == "oureveryday":
-                selected_source = LuaEndpoint.OUREVERYDAY
-            elif source == "ryuu":
-                selected_source = LuaEndpoint.RYUU
-            elif source == "depotbox":
-                selected_source = LuaEndpoint.DEPOTBOX
-            else:
-                selected_source = LuaEndpoint.HUBCAP if self._api_key else LuaEndpoint.OUREVERYDAY
-            # Download lua into the per-user backup folder, NOT into
-            # <steam>/config/. install_lua_to_steam then copies it into
-            # <steam>/config/stplug-in/. Writing to <steam>/config/ directly
-            # left a stray <steam>/config/<app_id>.lua next to stplug-in/
-            # that the Remove from Library helper never cleans up.
-            saved_lua_root = Path.cwd() / "saved_lua"
-            saved_lua_root.mkdir(exist_ok=True)
-            lua_path = download_lua_direct(
-                dest=saved_lua_root,
-                app_id=app_id,
-                source=selected_source,
-                steam_path=steam_path,
-                request_update=request_update,
-            )
-            if not lua_path:
-                # Surface a clear failure to the UI so the bar doesnt sit at
-                # 10% forever. download_lua_direct returns None on timeout
-                # against the Steam CM (30s ceiling) or any other source
-                # error. The user can switch source and retry.
-                self.download_progress.emit(json.dumps({
-                    "task": "download_fastest",
-                    "app_id": app_id,
-                    "status": (
-                        "Lua download failed. Steam CM may be down or the "
-                        "selected source returned nothing. Try a different "
-                        "provider (Hubcap / oureveryday) and retry."
-                    ),
-                    "progress": 0,
-                }))
-                return False
-
-            saved_lua = saved_lua_root
-            backup_target = saved_lua / f"{app_id}.lua"
-            try:
-                if lua_path != backup_target:
-                    shutil.copyfile(lua_path, backup_target)
-            except Exception:
-                pass
-
-            # Step 2: parse lua
-            self.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Parsing Lua", "progress": 20
-            }))
-            lua_contents = lua_path.read_text(encoding="utf-8", errors="replace")
-            parsed = parse_lua_contents(lua_contents, lua_path)
-            if not parsed:
-                return False
-            _auto_update_was_registered = self._auto_update_was_registered(app_id)
-
-            # Step 4: register app ID for injection
-            self.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Registering app ID", "progress": 40
-            }))
-            if hasattr(self._ui, 'app_list_man') and self._ui.app_list_man:
-                try:
-                    self._ui.app_list_man.add_ids(parsed)
-                except Exception as e:
-                    logger.warning("add_ids failed: %s", e)
-
-            # Step 5: write decryption keys
-            self.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Writing decryption keys", "progress": 50
-            }))
-            config_writer = ConfigVDFWriter(steam_path)
-            try:
-                config_writer.add_decryption_keys_to_config(parsed)
-            except Exception as e:
-                logger.warning("add_decryption_keys failed: %s", e)
-
-            # Step 6: backup & install lua to Steam plugin dir
-            self.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Installing Lua to Steam", "progress": 60
-            }))
-            try:
-                install_lua_to_steam(steam_path, app_id, lua_path)
-                self._apply_auto_update_default(app_id, _auto_update_was_registered)
-            except Exception as e:
-                logger.warning("install_lua_to_steam failed: %s", e)
-
-            # Step 7: write ACF + patch workshop ACF
-            self.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Writing ACF files", "progress": 70
-            }))
-            acf_writer = ACFWriter(lib_path)
-            try:
-                acf_writer.write_acf(parsed)
-            except Exception as e:
-                logger.warning("write_acf failed: %s", e)
-            try:
-                if hasattr(acf_writer, 'patch_workshop_acf'):
-                    acf_writer.patch_workshop_acf(parsed)
-            except Exception as e:
-                logger.warning("patch_workshop_acf failed: %s", e)
-
-            # Step 8: register in libraryfolders.vdf
-            self.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Registering in library", "progress": 80
-            }))
-            try:
-                ensure_library_has_app(steam_path, lib_path, app_id)
-            except Exception as e:
-                logger.warning("ensure_library_has_app failed: %s", e)
-
-            # Step 9: skip manifest download — Lua + depotcache already seeded.
-            # ManifestDownloader would trigger a 20-45s steam_client login that
-            # freezes the UI. The acf_writer + ensure_library_has_app above
-            # already registered everything Steam needs.
-
-            # Step 10: track in download manager
-            self.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Updating download tracker", "progress": 95
-            }))
-            if hasattr(self._ui, 'download_manager') and self._ui.download_manager:
-                try:
-                    from sff.network.http_utils import get_game_name
-                    dl_id = self._ui.download_manager.track_external(
-                        app_id=app_id,
-                        game_name=get_game_name(app_id) or f"App {app_id}",
-                    )
-                    self._ui.download_manager.complete_external(dl_id, success=True)
-                except Exception as e:
-                    logger.warning("download tracking failed: %s", e)
-
-            # Step 11: done
-            self.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": "Complete", "progress": 100
-            }))
-            return True
-
-        except Exception as e:
-            logger.exception("Windows fastest download failed: %s", e)
-            self.download_progress.emit(json.dumps({
-                "app_id": app_id, "status": f"Error: {e}", "progress": 0
-            }))
-            return False
-
     def _run_linux_fastest(self, app_id):
         """Wraps process_from_store; distinguishes real, partial, and no-sls runs."""
         # Refuse to run when SLSSteam is not initialized; the old code returned
@@ -1314,10 +1153,10 @@ class WebBridge(QObject):
     def download_dlc_oureveryday(self, dlc_appid, parent_appid):
         return _bridge_download_dlc_oureveryday(self, dlc_appid, parent_appid)
     @pyqtSlot(str, str, str, str)
-    def download_game_version(self, app_id, manifest_override_json, source='oureveryday', build_id=''):
+    def download_game_version(self, app_id, manifest_override_json, source='freelua', build_id=''):
         return _bridge_download_game_version(self, app_id, manifest_override_json, source, build_id)
     @pyqtSlot(str, str, str, str)
-    def download_game_version_native(self, app_id, manifest_override_json, source='oureveryday', build_id=''):
+    def download_game_version_native(self, app_id, manifest_override_json, source='freelua', build_id=''):
         return _bridge_download_game_version_native(self, app_id, manifest_override_json, source, build_id)
     @pyqtSlot(str, str)
     def download_older_version_auto(self, app_id, build_id):
@@ -1806,7 +1645,7 @@ class WebBridge(QObject):
                 _bridge_download_game_with_source(
                     self,
                     item["app_id"],
-                    item["source"] or "oureveryday",
+                    item["source"] or "freelua",
                     "0", "", "", "", "",
                 )
         except Exception as e:
@@ -1832,7 +1671,7 @@ class WebBridge(QObject):
                 app_id = str(entry.get("app_id", "") or "").strip()
                 if not app_id.isdigit():
                     continue
-                if _dq.enqueue(app_id, entry.get("name", ""), source or "oureveryday"):
+                if _dq.enqueue(app_id, entry.get("name", ""), source or "freelua"):
                     added += 1
             self._advance_download_queue()
             self._emit_task_result(
@@ -1923,7 +1762,7 @@ class WebBridge(QObject):
         as paused so a restart picks it back up on Resume."""
         try:
             from sff.game import download_queue as _dq
-            _dq.pause_by_app_id(app_id, name, source or "oureveryday")
+            _dq.pause_by_app_id(app_id, name, source or "freelua")
         finally:
             self._emit_download_queue_state()
 
@@ -2387,8 +2226,9 @@ class WebBridge(QObject):
     @pyqtSlot(str, str, str, str, str)
     @pyqtSlot(str, str, str, str, str, str, str)
     @pyqtSlot(str, str, str, str, str, str, str, str)
-    def download_game_ddmod(self, app_id, source, lua_path, manifest_folder='', target_os='', branch='', file_type='', custom_depots=''):
-        return _bridge_download_game_ddmod(self, app_id, source, lua_path, manifest_folder, target_os, branch, file_type, custom_depots)
+    @pyqtSlot(str, str, str, str, str, str, str, str, str)
+    def download_game_ddmod(self, app_id, source, lua_path, manifest_folder='', target_os='', branch='', file_type='', custom_depots='', file_filters=''):
+        return _bridge_download_game_ddmod(self, app_id, source, lua_path, manifest_folder, target_os, branch, file_type, custom_depots, file_filters)
     @pyqtSlot(str, str, str)
     def import_local_lua(self, app_id, lua_path, manifest_folder=''):
         return _bridge_import_local_lua(self, app_id, lua_path, manifest_folder)

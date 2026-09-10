@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 _KEY_URL = "https://manifesthub2.filegear-sg.me"
 _EXPIRY_SECONDS = 86_400  # 24 h
 _renewal_lock = threading.Lock()
+_skipped_this_session = False
 
 
 def _key_is_valid():
@@ -50,17 +51,24 @@ def _save_key(key):
     from sff.core.storage.settings import set_setting
     from sff.core.structs import Settings
 
+    global _skipped_this_session
+    _skipped_this_session = False
     set_setting(Settings.MANIFESTHUB_API_KEY, key)
     set_setting(Settings.MANIFESTHUB_KEY_EXPIRY, str(time.time() + _EXPIRY_SECONDS))
 
 
 def get_manifesthub_api_key():
     """Get a valid key; opens the generator page in the user's browser if renewal needed."""
+    global _skipped_this_session
     from sff.core.storage.settings import get_setting
     from sff.core.structs import Settings
 
     if _key_is_valid():
         return get_setting(Settings.MANIFESTHUB_API_KEY)
+    # ManifestHub is the first source tried, so a blank answer must stick for
+    # the whole run or every depot would re-prompt.
+    if _skipped_this_session:
+        return None
 
     with _renewal_lock:
         # Re-check inside lock — another parallel thread may have already renewed.
@@ -74,9 +82,17 @@ def get_manifesthub_api_key():
         # Opens URL in the user's default/active browser — one tab, no flicker.
         webbrowser.open(_KEY_URL)
         pasted = prompt_text(
-            "Paste your ManifestHub API key (leave blank to skip): "
+            "This download needs a manifest file. ManifestHub is a free service "
+            "that provides them.\n\n"
+            f"Your browser should have opened: {_KEY_URL}\n"
+            "Copy the API key shown on that page, then paste it here.\n"
+            "The key works for 24 hours, then this box appears again.\n\n"
+            "No key? Leave the box empty and press OK. The download continues "
+            "with the free mirror sources instead, which can be slower or miss "
+            "the newest updates."
         ).strip()
         if pasted:
             _save_key(pasted)
             return pasted
+        _skipped_this_session = True
         return None

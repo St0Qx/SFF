@@ -280,7 +280,16 @@ class SFFMainWindow(QMainWindow):
         try:
             from PyQt6.QtWebEngineCore import QWebEngineProfile
             profile = self._web_view.page().profile()
-            profile.setHttpCacheMaximumSize(256 * 1024 * 1024)
+            # Chromium disk-caches our file:// js/css and happily serves the
+            # stale copy after a code update, so the webui can never pick up
+            # changes. It's all local; caching buys nothing. NoHttpCache must
+            # be set before the first navigation; clearHttpCache removes the
+            # stale entries a previous persistent-profile session left behind.
+            try:
+                profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoHttpCache)
+            except Exception:
+                pass
+            profile.clearHttpCache()
         except Exception:
             pass
         self._web_view.page().settings().setAttribute(

@@ -109,7 +109,7 @@ class InjectionProfileChoice(Enum):
 
 
 class LuaEndpoint(Enum):
-    OUREVERYDAY = "oureveryday (quick but could be limited)"
+    FREELUA = "Free Providers"
     HUBCAP = "Hubcap Manifest (more stuff, needs API key, has a daily limit)"
     RYUU = "Ryuu Generator (needs API key)"
     DEPOTBOX = "DepotBox (needs API key, rate-limited)"
@@ -119,6 +119,7 @@ class MainReturnCode(Enum):
     LOOP = auto()
     LOOP_NO_PROMPT = auto()
     EXIT = auto()
+    DOWNLOAD_FAILED = auto()
 
 
 class SettingCustomTypes(Enum):

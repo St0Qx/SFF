@@ -319,10 +319,27 @@ class ManifestDownloader:
                 cdn = CDNClient(self.provider.client)
                 return cdn
             except gevent.Timeout:
+                # CDNClient() blocks on CM round-trips (server list + licenses).
+                # Steam now refuses manifest requests from clients that don't own
+                # the depot, so an anonymous login just stalls here - this path
+                # is dead, the provider cascade above is what actually works.
+                conn = getattr(self.provider.client, "connected", None)
+                logged = getattr(self.provider.client, "logged_on", None)
                 if attempt < max_retries - 1:
                     print(f"CDN Client timed out. Retrying ({attempt + 1}/{max_retries})...")
+                    logger.warning(
+                        "CDN client init timed out (%d/%d): steam connected=%s logged_on=%s "
+                        "- Steam no longer serves manifests to anonymous clients, "
+                        "falling back to Hubcap/ManifestHub/GitHub mirrors",
+                        attempt + 1, max_retries, conn, logged,
+                    )
                 else:
-                    raise RuntimeError("CDN Client timed out after maximum retries.") from None
+                    raise RuntimeError(
+                        f"CDN Client timed out after {max_retries} retries "
+                        f"(steam connected={conn}, logged_on={logged}). Steam refuses "
+                        "manifest downloads for accounts that don't own the game; "
+                        "use Hubcap/Ryuu lua bundles or ManifestHub instead."
+                    ) from None
 
     def _try_hubcap_generate(
         self, depot_id: str, manifest_id: str
@@ -413,34 +430,6 @@ class ManifestDownloader:
                 logger.debug(f"GitHub mirror ({label}) returned HTTP {resp.status_code} for depot {depot_id}")
             except Exception as e:
                 logger.debug(f"GitHub mirror ({label}) fetch failed for depot {depot_id}: {e}")
-        return None
-
-    def _try_manifesthub_combined(
-        self, depot_id: str, manifest_id: str, app_id: str
-    ):
-        """
-        Fire ManifestHub API and GitHub mirror simultaneously.
-        Returns the data from whichever endpoint finishes fastest and succeeds.
-        """
-        from concurrent.futures import as_completed
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = {
-                pool.submit(self._try_manifesthub, depot_id, manifest_id): "API",
-                pool.submit(self._try_github_manifest_bytes, app_id, depot_id, manifest_id): "GitHub"
-            }
-            for future in as_completed(futures):
-                name = futures[future]
-                try:
-                    result = future.result()
-                    if result is not None:
-                        logger.debug(f"Depot {depot_id}: {name} returned manifest {manifest_id} fastest.")
-                        # cancel the other one (though ThreadPoolExecutor doesn't strictly cancel running threads,
-                        # python futures will be marked to not execute if they haven't started)
-                        for f in futures:
-                            f.cancel()
-                        return result
-                except Exception as e:
-                    logger.debug(f"{name} failed in _try_manifesthub_combined: {e}")
         return None
 
     def _try_mirror_endpoints(self, depot_id, manifest_id):
@@ -541,18 +530,22 @@ class ManifestDownloader:
             logger.debug(f"Hubcap path for depot {depot_id}: all sources failed")
             return None
         # oureveryday path ─────────────────────────────────────────────────────
-        # Step 1: Try the 3 GMRC mirrors
-        #          directly. Each returns a request code; we pull the manifest
-        #          from Steam CDN with it. HTTPS before HTTP.
-        # Step 2: Fall back to the 3 GitHub raw mirror repos.
-        # Step 3: ManifestHub API (auto-prompts for key if none cached).
+        # Step 1: ManifestHub API - the default for MidraEveryDay. Auto-prompts
+        #          for a key (opens the generator page) if none is cached or it
+        #          expired; blank answer falls through to the free mirrors.
+        # Step 2: Try the 3 GMRC mirrors for a request code, pull the manifest
+        #          from steampipe CDN with it. HTTPS before HTTP.
+        # Step 3: Fall back to the 3 GitHub raw mirror repos.
         # Step 4: Encrypted GMRC endpoint + CDN (last resort).
-        # Step 1: Hit the 3 mirror endpoints
+        mh_result = self._try_manifesthub(depot_id, manifest_id)
+        if mh_result is not None:
+            return mh_result
+        # Step 2: Hit the 3 mirror endpoints
         #          to get a request code and download from steampipe CDN.
         mirror_result = self._try_mirror_endpoints(depot_id, manifest_id)
         if mirror_result is not None:
             return mirror_result
-        # Step 2: Try all 3 GitHub raw manifest mirrors in sequence.
+        # Step 3: Try all 3 GitHub raw manifest mirrors in sequence.
         #          Each hosts the same k25FCdfEOoEJ42S6 manifest set.
         try:
             gh_result = self._try_github_manifest_bytes(app_id, depot_id, manifest_id)
@@ -560,11 +553,6 @@ class ManifestDownloader:
                 return gh_result
         except Exception as e:
             logger.debug("oureveryday github fallback failed: %s", e)
-        # Step 3: Try ManifestHub API. Returns None silently if no key
-        #          is set so we fall through to the last step.
-        mh_result = self._try_manifesthub(depot_id, manifest_id)
-        if mh_result is not None:
-            return mh_result
         # Step 4: Last resort — encrypted GMRC endpoint for a request
         #          code, then download from steampipe CDN.
         req_code = asyncio.run(get_gmrc(manifest_id, silent=True))

@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SteaMidra</title>
-    <link rel="stylesheet" href="css/main.css">
-    <link rel="stylesheet" href="css/themes.css">
-    <link rel="stylesheet" href="css/cards.css">
-    <link rel="stylesheet" href="css/animations.css">
-    <link rel="stylesheet" href="css/premium.css">
+    <link rel="stylesheet" href="css/main.css?v=668d">
+    <link rel="stylesheet" href="css/themes.css?v=668d">
+    <link rel="stylesheet" href="css/cards.css?v=668d">
+    <link rel="stylesheet" href="css/animations.css?v=668d">
+    <link rel="stylesheet" href="css/premium.css?v=668d">
     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 </head>
 <body>
@@ -536,7 +536,7 @@ start YourGame-Shipping.exe</pre>
                 <span id="store-select-count">0 selected</span>
                 <span style="display:inline-flex;align-items:center;gap:6px;margin-left:12px;font-size:12px;">
                     <span style="opacity:0.7;">Provider:</span>
-                    <label style="font-size:12px;"><input type="radio" name="store-select-source" value="oureveryday" checked> MidraEveryDay</label>
+                    <label style="font-size:12px;"><input type="radio" name="store-select-source" value="freelua" checked> Free Providers</label>
                     <label style="font-size:12px;"><input type="radio" name="store-select-source" value="hubcap"> Hubcap</label>
                     <label style="font-size:12px;"><input type="radio" name="store-select-source" value="ryuu"> Ryuu</label>
                     <label style="font-size:12px;"><input type="radio" name="store-select-source" value="depotbox"> DepotBox</label>
@@ -1469,7 +1469,7 @@ start YourGame-Shipping.exe</pre>
                     <a href="#" id="about-github">GitHub</a>
                 </p>
                 <p style="font-size:12px;opacity:0.85;margin-top:6px;line-height:1.6;">
-                    Download providers: MidraEveryDay, Hubcap, Ryuu, DepotBox<br>
+                    Download providers: Free Providers, Hubcap, Ryuu, DepotBox<br>
                     Community servers (API keys):
                     <a href="#" id="about-link-hubcap">Hubcap</a> ·
                     <a href="#" id="about-link-depotbox">DepotBox</a> ·
@@ -1589,7 +1589,7 @@ start YourGame-Shipping.exe</pre>
                     <div class="dl-source-picker">
                     <span class="dl-source-label">Download source:</span>
                     <label class="dl-source-option">
-                        <input type="radio" name="dl-source" value="oureveryday" checked> MidraEveryDay
+                        <input type="radio" name="dl-source" value="freelua" checked> Free Providers
                     </label>
                     <label class="dl-source-option">
                         <input type="radio" name="dl-source" value="hubcap"> Hubcap
@@ -1627,14 +1627,6 @@ start YourGame-Shipping.exe</pre>
                             <option value="public">public (default)</option>
                         </select>
                         <button id="ryuu-request-branch-btn" class="btn btn-sm" style="font-size:10px; padding:2px 6px; margin-top:3px; width:100%;" title="Request this branch from Ryuu (needs premium API key)">Request Branch</button>
-                    </div>
-                    <div style="margin-top:6px;">
-                        <label style="font-size:12px;">File type:</label>
-                        <select id="ryuu-file-type" style="width:100%; font-size:12px; margin-top:2px;">
-                            <option value="zip">ZIP (lua + manifests)</option>
-                            <option value="lua">Lua only</option>
-                            <option value="manifest">Manifests only</option>
-                        </select>
                     </div>
                 </div>
                 <div id="dl-local-row" style="display:none; margin-top:8px; padding-left:4px; display:none;">
@@ -1838,7 +1830,7 @@ start YourGame-Shipping.exe</pre>
                 <div class="dl-source-picker" style="margin-bottom:10px;">
                     <span class="dl-source-label">Lua source:</span>
                     <label class="dl-source-option">
-                        <input type="radio" name="steam-home-source" value="oureveryday" checked> MidraEveryDay
+                        <input type="radio" name="steam-home-source" value="freelua" checked> Free Providers
                     </label>
                     <label class="dl-source-option">
                         <input type="radio" name="steam-home-source" value="hubcap"> Hubcap
@@ -1928,7 +1920,7 @@ start YourGame-Shipping.exe</pre>
                 <div class="dl-source-picker" style="margin-bottom:10px;">
                     <span class="dl-source-label">Lua source:</span>
                     <label class="dl-source-option">
-                        <input type="radio" name="ddmod-home-source" value="oureveryday" checked> MidraEveryDay
+                        <input type="radio" name="ddmod-home-source" value="freelua" checked> Free Providers
                     </label>
                     <label class="dl-source-option">
                         <input type="radio" name="ddmod-home-source" value="hubcap"> Hubcap
@@ -2021,6 +2013,27 @@ start YourGame-Shipping.exe</pre>
                 <button id="depot-picker-steamdb" class="btn" style="margin-right:auto;color:var(--accent,#4a9eff);border-color:var(--accent,#4a9eff);">Open SteamDB</button>
                 <button id="depot-picker-ok" class="btn btn-primary" disabled>OK</button>
                 <button class="btn modal-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Depot File Explorer Modal -->
+    <div id="depot-files-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h2 id="depot-files-title">Depot Files</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="depot-files-loading" class="loading-spinner">Reading depot manifest... This can take a minute.</div>
+                <div id="depot-files-empty" class="hidden" style="font-size:12px;opacity:0.7;padding:8px 0;"></div>
+                <div id="depot-files-list" class="hidden" style="max-height:380px;overflow:auto;border:1px solid var(--border,rgba(255,255,255,0.12));border-radius:6px;padding:6px 8px;font-size:12px;"></div>
+            </div>
+            <div class="modal-footer" style="display:flex;align-items:center;">
+                <button id="depot-files-deselect" class="btn" style="margin-right:auto;">Deselect All</button>
+                <button class="btn modal-cancel">Cancel</button>
+                <button id="depot-files-ok" class="btn btn-primary" disabled>OK</button>
             </div>
         </div>
     </div>
@@ -2321,7 +2334,7 @@ start YourGame-Shipping.exe</pre>
                 <div id="dlc-check-bulk-actions" style="display:none;gap:8px;flex-wrap:wrap;">
                     <span style="font-size:12px;color:var(--fg-muted);align-self:center;">Download checked DLCs through:</span>
                     <button class="btn dlc-bulk-dl" data-source="hubcap">Hubcap</button>
-                    <button class="btn dlc-bulk-dl" data-source="oureveryday">MidraEveryDay</button>
+                    <button class="btn dlc-bulk-dl" data-source="freelua">Free Providers</button>
                     <button class="btn dlc-bulk-dl" data-source="ryuu">Ryuu</button>
                     <button class="btn dlc-bulk-dl" data-source="local">Local files</button>
                 </div>
@@ -2336,19 +2349,19 @@ start YourGame-Shipping.exe</pre>
     <!-- Log panel removed — Logs button opens native GlobalLogWindow via bridge -->
 
     <!-- Scripts -->
-    <script src="js/bridge.js"></script>
-    <script src="js/components.js"></script>
-    <script src="js/tooltips.js"></script>
+    <script src="js/bridge.js?v=668d"></script>
+    <script src="js/components.js?v=668d"></script>
+    <script src="js/tooltips.js?v=668d"></script>
     <script src="js/i18n.js"></script>
-    <script src="js/app.js"></script>
-    <script src="js/store.js"></script>
-    <script src="js/library.js"></script>
-    <script src="js/downloads.js"></script>
-    <script src="js/fixgame.js"></script>
-    <script src="js/cloudsaves.js"></script>
-    <script src="js/settings.js"></script>
-    <script src="js/bulk_import.js"></script>
-    <script src="js/dlc_check.js"></script>
+    <script src="js/app.js?v=668d"></script>
+    <script src="js/store.js?v=668d"></script>
+    <script src="js/library.js?v=668d"></script>
+    <script src="js/downloads.js?v=668d"></script>
+    <script src="js/fixgame.js?v=668d"></script>
+    <script src="js/cloudsaves.js?v=668d"></script>
+    <script src="js/settings.js?v=668d"></script>
+    <script src="js/bulk_import.js?v=668d"></script>
+    <script src="js/dlc_check.js?v=668d"></script>
     <div id="confirm-dialog" class="modal hidden">
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-width:400px;">

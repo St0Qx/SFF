@@ -587,7 +587,7 @@ if __name__ == "__main__":
 
             continue
 
-        elif return_code == MainReturnCode.LOOP:
+        elif return_code in (MainReturnCode.LOOP, MainReturnCode.DOWNLOAD_FAILED):
 
             # Use native confirm to avoid WNDPROC/WPARAM error (prompt_select cleanup on Windows)
 

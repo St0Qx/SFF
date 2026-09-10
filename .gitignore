@@ -108,3 +108,8 @@ diff_gl.py
 diff_output.txt
 _gc.py
 sff/_gc.py
+
+.sff_encryption_key
+download_queue.json
+acf_pending_queue.json
+sff/lua/trionine_depotkeys.json

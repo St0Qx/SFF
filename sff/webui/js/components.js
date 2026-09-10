@@ -341,8 +341,9 @@ window.Components = (function() {
         if (dlDdmodDest) dlDdmodDest.value = '';
 
         // Reset source to default, then pre-fetch Ryuu branches in background
-        var defaultSource = document.querySelector('input[name="dl-source"][value="oureveryday"]');
+        var defaultSource = document.querySelector('input[name="dl-source"][value="freelua"]');
         if (defaultSource) defaultSource.checked = true;
+        if (window._applySourceAutoPick) window._applySourceAutoPick('dl-source');
         if (window._updateDownloadSourceHint) window._updateDownloadSourceHint();
         var ryuuOpt = document.getElementById('ryuu-update-option');
         if (ryuuOpt) ryuuOpt.style.display = 'none';

@@ -243,7 +243,7 @@ window.App = (function() {
                         );
                     }
                     if (result.task === 'download_fastest' && result.success) {
-                        var addedKey = 'Added to library. Open Steam to download.';
+                        var addedKey = 'Download completed. The game is in your library.';
                         var addedMsg = (window.I18n && I18n.t) ? I18n.t(addedKey) : addedKey;
                         Components.showToast('success', addedMsg);
                         _populateGameDropdown();
@@ -788,6 +788,34 @@ window.App = (function() {
         }
         window._updateDownloadSourceHint = _updateDownloadSourceHint;
 
+        // Auto-pick the download source by saved API key: a provider the
+        // user has a key for beats the Free Providers default. Priority Hubcap >
+        // Ryuu > DepotBox; if none have a key, leave the HTML default
+        // (Free Providers) and its hint. Fires the change handler so the Ryuu/local
+        // option rows show/hide correctly. _getProviderKeys pulls the three
+        // keys in one call (get_all_settings masks hidden keys, so presence
+        // is read as "non-empty string", which a real key satisfies).
+        function _applySourceAutoPick(groupName, cb) {
+            Bridge.callSync('get_all_settings', function(json) {
+                var s;
+                try { s = JSON.parse(json || '{}'); } catch(e) { s = {}; }
+                var has = function(k) { return !!(s[k] && String(s[k]).trim()); };
+                var pick = has('morrenus_key') ? 'hubcap'
+                    : (has('ryuu_key') || has('ryuu_api_key')) ? 'ryuu'
+                    : has('depotbox_key') ? 'depotbox' : '';
+                if (pick) {
+                    var radio = document.querySelector(
+                        'input[name="' + groupName + '"][value="' + pick + '"]');
+                    if (radio && !radio.checked) {
+                        radio.checked = true;
+                        radio.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                }
+                if (cb) cb();
+            });
+        }
+        window._applySourceAutoPick = _applySourceAutoPick;
+
         // Ryuu branch refresh button
         var ryuuRefreshBtn = document.getElementById('ryuu-refresh-branches');
         if (ryuuRefreshBtn) {
@@ -883,7 +911,7 @@ window.App = (function() {
             dlFastest.addEventListener('click', function() {
                 var appId = this.dataset.appid;
                 var sourceEl = document.querySelector('input[name="dl-source"]:checked');
-                var source = sourceEl ? sourceEl.value : 'oureveryday';
+                var source = sourceEl ? sourceEl.value : 'freelua';
                 var updateEl = document.getElementById('ryuu-request-update');
                 var requestUpdate = (source === 'ryuu' && updateEl && updateEl.checked) ? '1' : '0';
                 var branch = '';
@@ -891,8 +919,7 @@ window.App = (function() {
                 if (source === 'ryuu') {
                     var branchSel = document.getElementById('ryuu-branch-select');
                     if (branchSel) branch = branchSel.value || 'public';
-                    var ftSel = document.getElementById('ryuu-file-type');
-                    if (ftSel) fileType = ftSel.value || 'zip';
+                    fileType = 'zip';
                 }
                 Components.hideModal('download-modal');
                 if (source === 'local') {
@@ -917,7 +944,7 @@ window.App = (function() {
                 window._olderVersionCrackBuildId = null;
                 Components.hideModal('download-modal');
                 var sourceEl = document.querySelector('input[name="dl-source"]:checked');
-                window._olderVersionSource = sourceEl ? sourceEl.value : 'oureveryday';
+                window._olderVersionSource = sourceEl ? sourceEl.value : 'freelua';
                 Bridge.callSync('get_platform', function(platform) {
                     if (platform === 'win32') {
                         var modeModal = document.getElementById('older-mode-modal');
@@ -1088,7 +1115,7 @@ window.App = (function() {
                     return;
                 }
                 var sourceEl = document.querySelector('input[name="dl-source"]:checked');
-                var source = sourceEl ? sourceEl.value : 'oureveryday';
+                var source = sourceEl ? sourceEl.value : 'freelua';
                 var luaPath = '';
                 var manifestFolder = '';
                 if (source === 'local') {
@@ -1292,7 +1319,7 @@ window.App = (function() {
                     return;
                 }
                 var sourceEl = document.querySelector('input[name="steam-home-source"]:checked');
-                var source = sourceEl ? sourceEl.value : 'oureveryday';
+                var source = sourceEl ? sourceEl.value : 'freelua';
                 var updateEl = document.getElementById('steam-home-request-update');
                 var requestUpdate = (source === 'ryuu' && updateEl && updateEl.checked) ? '1' : '0';
                 Components.hideModal('steam-home-modal');
@@ -1407,7 +1434,7 @@ window.App = (function() {
                     return;
                 }
                 var sourceEl = document.querySelector('input[name="ddmod-home-source"]:checked');
-                var source = sourceEl ? sourceEl.value : 'oureveryday';
+                var source = sourceEl ? sourceEl.value : 'freelua';
                 var luaPath = '';
                 var manifestFolder = '';
                 if (source === 'local') {
@@ -1567,10 +1594,17 @@ window.App = (function() {
 
     // Advanced depot picker: user-curated depot lists keyed by select id,
     // shared between the store download modal and the home DDMod modal.
+    // _depotCustomFiles[appId][depotId] = selected top-level folder paths
+    // ([] or undefined = whole depot).
     var _depotCustomPicks = {};
+    var _depotCustomFiles = {};
+    // Full expanded file lists (every ticked file at any depth), used for
+    // the "(N selected)" tag and for restoring the explorer selection.
+    var _depotCustomSelFiles = {};
 
     function _initDepotAdvanced() {
         var pickerSel = '', pickerAppId = '';
+        var _pickerDepots = [], _pickerResolvedName = '';
 
         var _osNames = { windows: 'Windows', linux: 'Linux', macos: 'macOS', macosx: 'macOS', 'mac': 'macOS' };
         function _rowHtml(d, gameName) {
@@ -1583,9 +1617,16 @@ window.App = (function() {
                 .join(', ');
             var label = d.name || (gameName ? gameName + (os ? ' - ' + os : '') : 'Depot ' + d.id);
             var size = d.size ? Components.fmtBytes(d.size) : '&mdash;';
+            var selFiles = (_depotCustomSelFiles[String(pickerAppId)] || {})[d.id];
+            var nSel = selFiles ? selFiles.length : 0;
+            var fileTag = nSel ? ' <span style="opacity:0.65;font-size:10px;">(' + nSel + ' selected)</span>' : '';
             return '<tr>' +
                 '<td><input type="checkbox" class="depot-pick" value="' + esc(d.id) + '"></td>' +
-                '<td>' + esc(label) + '</td>' +
+                '<td><span class="depot-files-btn" data-depot="' + esc(d.id) + '" ' +
+                'style="cursor:pointer;color:var(--accent,#4a9eff);margin-right:6px;" ' +
+                'title="Pick which files to download">' +
+                '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>' +
+                '</span>' + esc(label) + fileTag + '</td>' +
                 '<td style="width:110px;">' + (esc(os) || '&mdash;') + '</td>' +
                 '<td style="width:86px;text-align:right;">' + size + '</td></tr>';
         }
@@ -1612,17 +1653,28 @@ window.App = (function() {
                 try { data = JSON.parse(json || '{}'); } catch(e) { data = {}; }
                 var depots = data.depots || [];
                 if (!depots.length) { empty.classList.remove('hidden'); return; }
-                var resolvedName = data.name || gameName || '';
-                var picked = _depotCustomPicks[String(appId)] || [];
-                var tbody = document.getElementById('depot-picker-tbody');
-                tbody.innerHTML = depots.map(function(d) { return _rowHtml(d, resolvedName); }).join('');
-                document.querySelectorAll('#depot-picker-tbody .depot-pick').forEach(function(cb) {
-                    cb.checked = picked.indexOf(cb.value) !== -1;
-                });
+                _pickerDepots = depots;
+                _pickerResolvedName = data.name || gameName || '';
+                _renderPickerRows(depots, _pickerResolvedName);
                 table.classList.remove('hidden');
                 ok.disabled = false;
             });
             Components.showModal('depot-picker-modal');
+        }
+
+        function _renderPickerRows(depots, resolvedName) {
+            // Keep in-session checkbox state so an explorer re-render
+            // doesn't reset depots the user just ticked.
+            var live = {};
+            document.querySelectorAll('#depot-picker-tbody .depot-pick').forEach(function(cb) {
+                live[cb.value] = cb.checked;
+            });
+            var saved = _depotCustomPicks[String(pickerAppId)] || [];
+            var tbody = document.getElementById('depot-picker-tbody');
+            tbody.innerHTML = depots.map(function(d) { return _rowHtml(d, resolvedName); }).join('');
+            document.querySelectorAll('#depot-picker-tbody .depot-pick').forEach(function(cb) {
+                cb.checked = (cb.value in live) ? live[cb.value] : saved.indexOf(cb.value) !== -1;
+            });
         }
 
         document.getElementById('dl-depot-advanced').addEventListener('click', function(e) {
@@ -1664,6 +1716,186 @@ window.App = (function() {
             if (pickerAppId) Bridge.call('open_url', 'https://steamdb.info/app/' + pickerAppId + '/depots/');
         });
 
+        // ── Per-depot file explorer modal ─────────────────────────────
+        var _exDepotId = '', _exTree = null, _exSel = null, _exDirty = false; // _exSel: Set of file paths
+
+        function _filesUnder(node) {
+            if (!node.children) return [node.path];
+            var out = [];
+            node.children.forEach(function(c) { out = out.concat(_filesUnder(c)); });
+            return out;
+        }
+
+        function _currentLuaPath() {
+            var homeSrc = document.querySelector('input[name="ddmod-home-source"]:checked');
+            if (homeSrc && homeSrc.value === 'local')
+                return (document.getElementById('ddmod-home-local-path') || {}).value || '';
+            var dlSrc = document.querySelector('input[name="dl-source"]:checked');
+            if (dlSrc && dlSrc.value === 'local')
+                return (document.getElementById('dl-local-lua-path') || {}).value || '';
+            return '';
+        }
+
+        document.getElementById('depot-picker-tbody').addEventListener('click', function(e) {
+            var btn = e.target.closest ? e.target.closest('.depot-files-btn') : null;
+            if (!btn) return;
+            e.stopPropagation();
+            var depotId = btn.dataset.depot;
+            var d = _pickerDepots.filter(function(x) { return x.id === depotId; })[0] || {};
+            _exDepotId = depotId;
+            _exTree = null; _exSel = null; _exDirty = false;
+            document.getElementById('depot-files-title').textContent =
+                'Files in depot ' + depotId + (d.name ? ' - ' + d.name : '');
+            document.getElementById('depot-files-empty').classList.add('hidden');
+            document.getElementById('depot-files-list').classList.add('hidden');
+            document.getElementById('depot-files-loading').classList.remove('hidden');
+            document.getElementById('depot-files-ok').disabled = true;
+            Components.showModal('depot-files-modal');
+            Bridge.call('fetch_depot_filetree', pickerAppId, depotId, _currentLuaPath());
+        });
+
+        function _exCollapse() {
+            // Maximal fully-selected paths: folders collapse to their prefix,
+            // partially-selected folders recurse into children.
+            var out = [];
+            (function walk(node, path) {
+                if (!node.children) { if (_exSel.has(path)) out.push(path); return; }
+                var files = _filesUnder(node);
+                var all = files.length > 0 && files.every(function(f) { return _exSel.has(f); });
+                if (all) { if (path) out.push(path); return; }
+                node.children.forEach(function(c) {
+                    walk(c, path ? path + '/' + c.name : c.name);
+                });
+            })(_exTree, '');
+            return out;
+        }
+
+        function _exFolderState(node, files) {
+            var n = 0;
+            for (var i = 0; i < files.length; i++) if (_exSel.has(files[i])) n++;
+            if (n === 0) return 'none';
+            return n === files.length ? 'all' : 'part';
+        }
+
+        function _exRenderNode(node, path, depth, container) {
+            var esc = Components.escapeHtml;
+            var isFolder = !!node.children;
+            var files = isFolder ? _filesUnder(node) : [path];
+            var state = isFolder ? _exFolderState(node, files) : (_exSel.has(path) ? 'all' : 'none');
+            var row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;padding-left:' + (depth * 18) + 'px;';
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = state === 'all';
+            // Indeterminate must be set after checked: assigning .checked
+            // resets it, so the reverse order hides partial folder states.
+            cb.indeterminate = state === 'part';
+            cb.dataset.files = JSON.stringify(files);
+            cb.dataset.path = path;
+            var label = document.createElement('span');
+            label.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+                (isFolder ? 'font-weight:600;cursor:pointer;' : 'opacity:0.85;');
+            label.textContent = (isFolder ? (node.open ? '▾ ' : '▸ ') : '· ') + node.name;
+            label.title = path;
+            var size = document.createElement('span');
+            size.textContent = Components.fmtBytes(node.size);
+            size.style.cssText = 'opacity:0.6;min-width:70px;text-align:right;';
+            row.appendChild(cb); row.appendChild(label); row.appendChild(size);
+            container.appendChild(row);
+            if (isFolder) {
+                var kids = document.createElement('div');
+                kids.dataset.kidsFor = path;
+                container.appendChild(kids);
+                if (node.open) {
+                    node.children.forEach(function(c) {
+                        _exRenderNode(c, path ? path + '/' + c.name : c.name, depth + 1, kids);
+                    });
+                }
+                label.addEventListener('click', function() {
+                    node.open = !node.open;
+                    _exRerender();
+                });
+            }
+            cb.addEventListener('change', function() {
+                var on = cb.checked;
+                _exDirty = true;
+                cb.dataset.files && JSON.parse(cb.dataset.files).forEach(function(f) {
+                    if (on) _exSel.add(f); else _exSel.delete(f);
+                });
+                _exRerender();
+            });
+        }
+
+        function _exRerender() {
+            var list = document.getElementById('depot-files-list');
+            list.innerHTML = '';
+            _exTree.children.forEach(function(c) {
+                _exRenderNode(c, c.name, 0, list);
+            });
+        }
+
+        Bridge.on('depot_filetree_results', function(json) {
+            var data;
+            try { data = JSON.parse(json || '{}'); } catch(e) { return; }
+            if (String(data.depot_id) !== String(_exDepotId) || !_exDepotId) return;
+            var loading = document.getElementById('depot-files-loading');
+            var empty = document.getElementById('depot-files-empty');
+            var list = document.getElementById('depot-files-list');
+            var ok = document.getElementById('depot-files-ok');
+            loading.classList.add('hidden');
+            if (!data.ok) {
+                empty.textContent = data.error || 'Could not read this depot.';
+                empty.classList.remove('hidden');
+                list.classList.add('hidden');
+                ok.disabled = true;
+                return;
+            }
+            _exTree = data.tree;
+            if (!_exTree.children || !_exTree.children.length) {
+                empty.textContent = 'This depot is empty.';
+                empty.classList.remove('hidden');
+                ok.disabled = true;
+                return;
+            }
+            empty.classList.add('hidden');
+            // Reopen: restore the last explicit pick; first open: everything
+            // selected. An empty saved array is a real choice (nothing
+            // ticked), so presence of the key is the signal, not its length.
+            var savedSel = (_depotCustomSelFiles[String(pickerAppId)] || {})[_exDepotId];
+            _exSel = savedSel ? new Set(savedSel) : new Set(_filesUnder(_exTree));
+            _exRerender();
+            list.classList.remove('hidden');
+            ok.disabled = false;
+        });
+
+        document.getElementById('depot-files-deselect').addEventListener('click', function() {
+            if (!_exSel) return;
+            _exSel.clear();
+            _exDirty = true;
+            _exRerender();
+        });
+        document.getElementById('depot-files-ok').addEventListener('click', function() {
+            if (_exDepotId && _exTree && _exSel) {
+                var chosen = _exCollapse();
+                // Everything ticked = no filter at all.
+                if (_exSel.size === _filesUnder(_exTree).length) chosen = [];
+                if (!_depotCustomFiles[String(pickerAppId)]) _depotCustomFiles[String(pickerAppId)] = {};
+                _depotCustomFiles[String(pickerAppId)][_exDepotId] = chosen;
+                if (!_depotCustomSelFiles[String(pickerAppId)]) _depotCustomSelFiles[String(pickerAppId)] = {};
+                _depotCustomSelFiles[String(pickerAppId)][_exDepotId] = Array.from(_exSel);
+                if (_exDirty) {
+                    var _dcb = document.querySelector(
+                        '#depot-picker-tbody .depot-pick[value="' + _exDepotId + '"]');
+                    if (_dcb) _dcb.checked = true;
+                }
+                if (chosen.length === 0 && _exSel.size === 0)
+                    Components.showToast('info', 'Nothing selected - the whole depot will be downloaded.');
+                _renderPickerRows(_pickerDepots, _pickerResolvedName);
+            }
+            _exDepotId = '';
+            Components.hideModal('depot-files-modal');
+        });
+
         // Lets _populateDepotOsOptions re-add the Custom row on rebuild.
         window._depotCustomHook = function(selectId, appId) {
             return _depotCustomPicks[String(appId)] || null;
@@ -1681,7 +1913,15 @@ window.App = (function() {
         if (window.Downloads) Downloads.setSource(appId, source);
         var customJson = targetOs === 'custom'
             ? JSON.stringify(_depotCustomPicks[String(appId)] || []) : '';
-        Bridge.call('download_game_ddmod', appId, source, luaPath || '', manifestFolder || '', targetOs || '', '', '', customJson);
+        var filesJson = '';
+        if (targetOs === 'custom') {
+            var _fmap = _depotCustomFiles[String(appId)] || {};
+            var _picked = _depotCustomPicks[String(appId)] || [];
+            var _ff = {};
+            _picked.forEach(function(d) { if ((_fmap[d] || []).length) _ff[d] = _fmap[d]; });
+            if (Object.keys(_ff).length) filesJson = JSON.stringify(_ff);
+        }
+        Bridge.call('download_game_ddmod', appId, source, luaPath || '', manifestFolder || '', targetOs || '', '', '', customJson, filesJson);
     }
 
     function _openSteamHomeModal(appId, gameName) {
@@ -1707,8 +1947,9 @@ window.App = (function() {
         if (recentRow) recentRow.style.display = 'none';
         var updateChk = document.getElementById('steam-home-request-update');
         if (updateChk) updateChk.checked = false;
-        var firstRadio = document.querySelector('input[name="steam-home-source"][value="oureveryday"]');
+        var firstRadio = document.querySelector('input[name="steam-home-source"][value="freelua"]');
         if (firstRadio) firstRadio.checked = true;
+        _applySourceAutoPick('steam-home-source');
         Bridge.callSync('get_recent_lua_files', function(json) {
             var files;
             try { files = JSON.parse(json || '[]'); } catch(e) { files = []; }
@@ -1817,8 +2058,9 @@ window.App = (function() {
         if (mfRow) mfRow.style.display = 'none';
         if (mfInp) mfInp.value = '';
         if (destInp) destInp.value = '';
-        var firstRadio = document.querySelector('input[name="ddmod-home-source"][value="oureveryday"]');
+        var firstRadio = document.querySelector('input[name="ddmod-home-source"][value="freelua"]');
         if (firstRadio) firstRadio.checked = true;
+        _applySourceAutoPick('ddmod-home-source');
         Components.populateDepotOsOptions('ddmod-home-target-os', appId);
 
         Bridge.callSync('get_recent_lua_files', function(json) {
@@ -2506,7 +2748,7 @@ window.App = (function() {
     function _downloadVersionWithOverride(appId, manifest_override, buildId) {
         Components.hideModal('version-modal');
         var method = window._olderVersionMethod || 'ddmod';
-        var source = window._olderVersionSource || 'oureveryday';
+        var source = window._olderVersionSource || 'freelua';
 
         _withLibraryPick(function() {
             if (method === 'steam_native') {
