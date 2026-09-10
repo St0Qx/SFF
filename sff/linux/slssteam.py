@@ -374,6 +374,21 @@ def is_steamos() -> bool:
     return "steamos" in text
 
 
+def bashrc_has_broken_prompt_guard() -> bool:
+    """True if ~/.bashrc still has the one-line early-return guard
+    (`[[ $- != *i* ]] && return`) that leaves Konsole showing a raw
+    job-control prompt like `(1)deck@steamdeck` on SteamOS instead of the
+    normal decorated prompt."""
+    bashrc = Path.home() / ".bashrc"
+    if not bashrc.exists():
+        return False
+    try:
+        lines = bashrc.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    return any(l.strip() == "[[ $- != *i* ]] && return" for l in lines)
+
+
 def patch_steam_jupiter(print_fn=print) -> bool:
     """Inject the SLSsteam LD_AUDIT export into /usr/bin/steam-jupiter so
     Gaming Mode gets ownership injection (Desktop Mode works via steam.sh,

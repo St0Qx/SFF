@@ -1509,10 +1509,12 @@ start YourGame-Shipping.exe</pre>
                 <div style="background:var(--card-bg);border:1px solid #ffb84d;border-radius:10px;padding:16px 20px;line-height:1.6;font-size:13px;">
                     <p style="margin-top:0;color:#ffb84d;font-weight:700;">IMPORTANT: Follow these steps before running Linux Setup.</p>
                     <ol style="padding-left:18px;">
-                        <li style="margin-bottom:8px;">Open Konsole and set a sudo password: <code>passwd</code></li>
-                        <li style="margin-bottom:8px;">Disable the read-only filesystem: <code>sudo steamos-readonly disable</code></li>
+                        <li style="margin-bottom:8px;"><strong>If Konsole prompt looks broken</strong> <code style="background:rgba(0,0,0,0.25);padding:2px 6px;border-radius:3px;">(1)deck@steamdeck</code> instead of <code style="background:rgba(0,0,0,0.25);padding:2px 6px;border-radius:3px;">deck@steamdeck</code><br>Run <code style="background:rgba(0,0,0,0.25);padding:2px 6px;border-radius:3px;">kate ~/.bashrc</code> and replace this line:<pre style="background:rgba(0,0,0,0.25);padding:10px;border-radius:4px;line-height:1.5;margin:6px 0;">[[ $- != *i* ]] && return</pre>with this:<pre style="background:rgba(0,0,0,0.25);padding:10px;border-radius:4px;line-height:1.5;margin:6px 0;">if [[ $- != *i* ]]; then
+    return
+fi</pre>Save the file, then reopen Konsole.</li>
+                        <li style="margin-bottom:8px;">Set your account password (used by sudo): <code style="background:#4caf50;color:#fff;padding:2px 6px;border-radius:3px;">passwd</code></li>
+                        <li style="margin-bottom:8px;">Disable the read-only filesystem: <code style="background:#4caf50;color:#fff;padding:2px 6px;border-radius:3px;">sudo steamos-readonly disable</code></li>
                         <li style="margin-bottom:8px;">Run SteaMidra's <strong>Linux Setup</strong> to install SLSsteam</li>
-                        <li style="margin-bottom:8px;"><strong>Enable SafeMode:</strong> Open <code>~/.config/SLSsteam/config.yaml</code> and change:<br><code style="background:var(--btn-bg);padding:2px 6px;border-radius:3px;">SafeMode: no</code> → <code style="background:#4caf50;color:#fff;padding:2px 6px;border-radius:3px;">SafeMode: yes</code><br>This prevents SLSsteam from crashing your Deck into a boot loop when Steam updates.</li>
                     </ol>
                 </div>
             </div>
@@ -1527,8 +1529,9 @@ start YourGame-Shipping.exe</pre>
                         <li style="margin-bottom:8px;">Find the line starting with <code>exec</code> near the bottom. <strong>Before</strong> that line, insert:<br><code style="background:var(--btn-bg);padding:4px 8px;border-radius:3px;display:inline-block;margin:4px 0;">export LD_AUDIT="/home/deck/.local/share/SLSsteam/library-inject.so:/home/deck/.local/share/SLSsteam/SLSsteam.so"</code></li>
                         <li style="margin-bottom:8px;"><strong>Save and close.</strong></li>
                         <li style="margin-bottom:8px;"><strong>Test in Desktop Mode first:</strong> launch Steam normally. If it opens and SLSsteam loads (you'll see a notification), Gaming Mode should work.</li>
-                        <li style="margin-bottom:8px;"><strong>Enable SafeMode:</strong> in SLSsteam's <code>config.yaml</code>, set <code>SafeMode: yes</code>. This makes SLSsteam disable itself instead of crashing Steam when a client update changes <code>steamclient.so</code> (the <em>Patch Gaming Mode</em> button below does this for you automatically).</li>
+                        <li style="margin-bottom:8px;"><strong>Enable SafeMode:</strong> in SLSsteam's <code>config.yaml</code>, set <code style="background:#4caf50;color:#fff;padding:2px 6px;border-radius:3px;">SafeMode: yes</code>. This makes SLSsteam disable itself instead of crashing Steam when a client update changes <code>steamclient.so</code>.</li>
                         <li style="margin-bottom:8px;"><strong>Your backup is at:</strong> <code>/usr/bin/steam-jupiter.bak</code></li>
+                        <li style="margin-bottom:8px;background:#ffc107;color:#1a1a1a;padding:4px 8px;border-radius:3px;display:inline-block;">The <em>Patch Gaming Mode</em> button below does this for you automatically</li>
                     </ol>
                 </div>
             </div>

@@ -236,6 +236,11 @@ window.App = (function() {
                         );
                         return;
                     }
+                    if (result.task === 'linux_setup' && result.needs_guide) {
+                        window.alert(result.message || 'Fix Konsole\'s prompt first, then rerun Linux Setup.');
+                        navigateTo('linuxguide');
+                        return;
+                    }
                     if (result.message) {
                         Components.showToast(
                             result.success ? 'success' : 'error',

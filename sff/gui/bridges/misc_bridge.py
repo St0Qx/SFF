@@ -1729,8 +1729,16 @@ def _bridge_linux_setup_now(bridge):
         log_lines: list[str] = []
         try:
             from pathlib import Path as _Path
-            from sff.linux.slssteam import detect_steam_type, install_from_github, setup_via_headcrab
+            from sff.linux.slssteam import (
+                detect_steam_type, install_from_github, setup_via_headcrab,
+                is_steamos, bashrc_has_broken_prompt_guard,
+            )
             from sff.downloads.dotnet_utils import ensure_dotnet_9
+
+            if is_steamos() and bashrc_has_broken_prompt_guard():
+                return (False, "Konsole's prompt looks broken on this Deck "
+                        "(shows `(1)deck@steamdeck` instead of `deck@steamdeck`). "
+                        "Fix that first, then rerun Linux Setup.", {"needs_guide": True})
 
             bridge.download_progress.emit(json.dumps({"status": "Detecting Steam installation...", "progress": 5}))
             if detect_steam_type() == "flatpak":
@@ -1760,8 +1768,14 @@ def _bridge_linux_setup_now(bridge):
             return (False, str(exc))
 
     def _on_done(result):
-        ok, msg = result if isinstance(result, tuple) else (False, "Linux setup failed")
-        bridge._emit_task_result("linux_setup", ok, msg)
+        if isinstance(result, tuple) and len(result) == 3:
+            ok, msg, extra = result
+        elif isinstance(result, tuple):
+            ok, msg = result
+            extra = {}
+        else:
+            ok, msg, extra = False, "Linux setup failed", {}
+        bridge._emit_task_result("linux_setup", ok, msg, **extra)
 
     bridge._run_async(_do, on_done=_on_done)
 

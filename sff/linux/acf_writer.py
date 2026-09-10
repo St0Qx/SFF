@@ -112,7 +112,7 @@ def create_acf(
         "AllowOtherDownloadsWhileRunning": "0",
         "ScheduledAutoUpdate": "0",
         "DownloadType": "1",
-        "InstalledDepots": installed_depots,
+        "InstalledDepots": {},
         "UserConfig": {"language": "english"},
         "MountedConfig": {"language": "english"},
     }
